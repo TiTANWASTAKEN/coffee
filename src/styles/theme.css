@@ -1,0 +1,133 @@
+/*
+ * HONEST TRUTH — DESIGN TOKENS
+ * ------------------------------------------------------------------
+ * Every colour, type size, spacing step, radius, shadow and easing
+ * used by the site lives here. Tailwind v4 turns each token into a
+ * utility (e.g. --color-ivory → `text-ivory`, `bg-ivory`) and also
+ * exposes it as a CSS variable (var(--color-ivory)).
+ *
+ * Change a value here and it updates everywhere.
+ */
+
+@theme {
+  /* ---------- Colour ---------- */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-black: #000;
+
+  --color-ink: #0d0c0b; /* page background — espresso black */
+  --color-surface: #151311; /* cards, panels */
+  --color-surface-raised: #1c1916; /* hover / raised panels */
+  --color-ivory: #f4f0e8; /* primary text — warm white */
+  --color-muted: #a7a096; /* secondary text — warm grey */
+  --color-faint: #6f6961; /* tertiary text, disabled */
+  --color-beige: #cdbfa8; /* muted beige accent */
+  --color-coffee: #5a3928; /* coffee brown — use sparingly */
+  --color-coffee-light: #8a654b;
+  --color-line: rgb(244 240 232 / 0.12); /* hairline borders */
+  --color-line-strong: rgb(244 240 232 / 0.26);
+
+  /* Status colours — admin dashboard only */
+  --color-success: #7fc8a0;
+  --color-warning: #e3b86a;
+  --color-danger: #e58a7f;
+  --color-info: #8ab6dc;
+
+  /* ---------- Typography ----------
+   * Two families, each with one job:
+   *
+   * DISPLAY — Playfair 2 (high-contrast Didone with an optical-size axis).
+   *   Headlines, product names, numerals, pull quotes, italic taglines.
+   *   Optical sizing is automatic: hairlines get finer as type gets bigger,
+   *   and sturdier at small heading sizes. Light (300) at display sizes,
+   *   regular (400) below ~28px, medium (500) only for the tracked wordmark.
+   *
+   * SANS — Instrument Sans (neo-grotesque).
+   *   Body copy, navigation, buttons, eyebrows/labels (uppercase + tracked),
+   *   forms and data. 400 for reading, 500 for eyebrows, 600 for buttons.
+   */
+  --font-display: "Playfair Variable", "Playfair", Didot, "Bodoni 72", "Times New Roman", Georgia, serif;
+  --font-display--font-feature-settings: "lnum", "kern";
+  --font-sans: "Instrument Sans Variable", "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* UI scale */
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1.2;
+  --text-eyebrow--letter-spacing: 0.28em;
+
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.3;
+  --text-label--letter-spacing: 0.18em;
+
+  --text-body-sm: 0.875rem;
+  --text-body-sm--line-height: 1.7;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.75;
+
+  --text-lead: clamp(1.0625rem, 0.9rem + 0.55vw, 1.3125rem);
+  --text-lead--line-height: 1.65;
+
+  /* Editorial display scale (fluid) */
+  --text-display-xs: clamp(1.625rem, 1.2rem + 1.4vw, 2.25rem);
+  --text-display-xs--line-height: 1.1;
+  --text-display-xs--letter-spacing: -0.01em;
+
+  --text-display-sm: clamp(2rem, 1.3rem + 2.6vw, 3.5rem);
+  --text-display-sm--line-height: 1.04;
+  --text-display-sm--letter-spacing: -0.015em;
+
+  --text-display-md: clamp(2.5rem, 1.4rem + 4.4vw, 5.5rem);
+  --text-display-md--line-height: 0.98;
+  --text-display-md--letter-spacing: -0.02em;
+
+  --text-display-lg: clamp(3rem, 1.2rem + 7vw, 8.5rem);
+  --text-display-lg--line-height: 0.92;
+  --text-display-lg--letter-spacing: -0.028em;
+
+  --text-display-xl: clamp(3.4rem, 0.8rem + 10.5vw, 12rem);
+  --text-display-xl--line-height: 0.86;
+  --text-display-xl--letter-spacing: -0.035em;
+
+  /* ---------- Spacing ---------- */
+  --spacing-gutter: clamp(1.25rem, 0.6rem + 3.2vw, 3.5rem); /* page side padding */
+  --spacing-section: clamp(6rem, 3rem + 10vw, 12rem); /* vertical rhythm between sections */
+  --spacing-section-sm: clamp(4rem, 2.5rem + 6vw, 7.5rem);
+  --spacing-nav: 4.5rem; /* navigation height */
+
+  /* ---------- Layout ---------- */
+  --container-site: 92rem;
+  --container-prose: 40rem;
+
+  /* ---------- Radius (luxury = sharp) ---------- */
+  --radius-none: 0;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-full: 9999px;
+
+  /* ---------- Shadow ---------- */
+  --shadow-lift: 0 40px 80px -40px rgb(0 0 0 / 0.85);
+  --shadow-soft: 0 20px 40px -24px rgb(0 0 0 / 0.7);
+
+  /* ---------- Motion ---------- */
+  --ease-luxe: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-curtain: cubic-bezier(0.76, 0, 0.24, 1);
+  --default-transition-duration: 450ms;
+  --default-transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * Product accent theming.
+ * Product pages set --accent / --accent-deep inline (see data/products.ts → theme).
+ * Everything else falls back to the brand default below.
+ */
+:root {
+  --accent: #cdbfa8;
+  --accent-deep: #5a3928;
+}
+
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+}

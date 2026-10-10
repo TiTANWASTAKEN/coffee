@@ -1,0 +1,46 @@
+{
+  "name": "honest-truth-coffee",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:api": "tsx watch --clear-screen=false --disable-warning=ExperimentalWarning server/index.ts",
+    "build": "tsc -b && vite build",
+    "start": "tsx --disable-warning=ExperimentalWarning server/index.ts",
+    "typecheck": "tsc -b --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource-variable/playfair": "^5.3.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "framer-motion": "^12.43.0",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.51.0",
+    "multer": "^2.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^7.18.4",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9",
+    "vite": "^7.3.6"
+  }
+}
