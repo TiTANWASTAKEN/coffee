@@ -10,6 +10,7 @@ import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Products from "./pages/Products";
 import ProductEdit from "./pages/ProductEdit";
+import Waitlist from "./pages/Waitlist";
 
 export default function AdminApp() {
   useEffect(() => {
@@ -45,6 +46,7 @@ function AdminRoutes() {
     <Routes>
       <Route element={<AdminLayout />}>
         <Route path="/admin" element={<Dashboard />} />
+        <Route path="/admin/waitlist" element={<Waitlist />} />
         <Route path="/admin/orders" element={<Orders />} />
         <Route path="/admin/orders/:id" element={<OrderDetail />} />
         <Route path="/admin/products" element={<Products />} />

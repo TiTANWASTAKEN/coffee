@@ -30,8 +30,9 @@ export function OrdersTable({ orders }: { orders: AdminOrder[] }) {
             >
               <td className="px-5 py-3">
                 <Link to={`/admin/orders/${o.id}`} className="font-medium hover:underline" onClick={(e) => e.stopPropagation()}>
-                  #{o.id}
+                  {o.code}
                 </Link>
+                <span className="block text-[0.75rem] uppercase tracking-wider text-faint">{o.paymentMethod}</span>
               </td>
               <td className="whitespace-nowrap px-3 py-3 text-muted">{formatDate(o.createdAt)}</td>
               <td className="px-3 py-3">
@@ -43,7 +44,7 @@ export function OrdersTable({ orders }: { orders: AdminOrder[] }) {
               <td className="px-3 py-3">
                 <Badge value={o.status} />
               </td>
-              <td className="px-5 py-3">{o.status === "paid" ? <Badge value={o.fulfillment} /> : <span className="text-faint">—</span>}</td>
+              <td className="px-5 py-3">{o.status === "paid" || o.paymentMethod === "cod" ? <Badge value={o.fulfillment} /> : <span className="text-faint">—</span>}</td>
             </tr>
           ))}
         </tbody>

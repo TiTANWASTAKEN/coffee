@@ -9,5 +9,6 @@ dist-ssr
 .env.*
 !.env.example
 
-# Database + uploaded images (see DATA_DIR)
-data
+# Database + uploaded images (see DATA_DIR). Anchored to the project root
+# so src/data (site content) is not ignored.
+/data

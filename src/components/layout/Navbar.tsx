@@ -5,7 +5,7 @@ import { Search, ShoppingBag, UserRound } from "lucide-react";
 import { primaryNav, site } from "@/config/site";
 import { Wordmark } from "@/components/ui/Wordmark";
 import { ease } from "@/lib/motion";
-import { storeEnabled } from "@/config/features";
+import { storeEnabled, waitlistEnabled } from "@/config/features";
 import { useAccount } from "@/store/account";
 import { useCart } from "@/store/cart";
 
@@ -71,14 +71,16 @@ export function Navbar({ menuOpen, onMenuToggle, onSearchOpen, onCartOpen, inert
           </ul>
 
           <div className="flex items-center justify-end gap-1">
-            <button
-              type="button"
-              onClick={onSearchOpen}
-              aria-label="Search"
-              className="grid size-11 place-items-center text-ivory/80 transition-colors hover:text-ivory"
-            >
-              <Search aria-hidden="true" strokeWidth={1.4} className="size-[18px]" />
-            </button>
+            {!waitlistEnabled && (
+              <button
+                type="button"
+                onClick={onSearchOpen}
+                aria-label="Search"
+                className="grid size-11 place-items-center text-ivory/80 transition-colors hover:text-ivory"
+              >
+                <Search aria-hidden="true" strokeWidth={1.4} className="size-[18px]" />
+              </button>
+            )}
             {storeEnabled && (
               <>
                 <Link
@@ -107,6 +109,7 @@ export function Navbar({ menuOpen, onMenuToggle, onSearchOpen, onCartOpen, inert
                 </button>
               </>
             )}
+            {!waitlistEnabled && (
             <button
               type="button"
               onClick={onMenuToggle}
@@ -128,6 +131,7 @@ export function Navbar({ menuOpen, onMenuToggle, onSearchOpen, onCartOpen, inert
                 />
               </span>
             </button>
+            )}
           </div>
         </nav>
       </div>

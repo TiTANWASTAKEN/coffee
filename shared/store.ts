@@ -6,6 +6,7 @@
 export interface StoreProduct {
   id: number;
   slug: string;
+  sku: string;
   name: string;
   description: string;
   price: number;
@@ -20,6 +21,7 @@ export interface StoreProduct {
 export interface ProductInput {
   name: string;
   slug?: string;
+  sku?: string;
   description: string;
   price: number;
   stock: number;
@@ -42,19 +44,40 @@ export interface CustomerDetails {
   postalCode: string;
 }
 
+export type PaymentMethod = "razorpay" | "cod" | "upi";
+
 export interface CreateOrderRequest {
   items: CheckoutItem[];
   customer: CustomerDetails;
   /** Signed-in customers only: remember this shipping address. */
   saveAddress?: boolean;
+  paymentMethod?: PaymentMethod;
+  notes?: string;
+  /** Same key on a retry returns the original order instead of creating another. */
+  idempotencyKey?: string;
+}
+
+export interface CheckoutConfig {
+  testPayments: boolean;
+  shippingPaise: number;
+  /** False when SHIPPING_PAISE was left unset. The charge is then ₹0 and the checkout says so. */
+  shippingConfigured: boolean;
+  methods: PaymentMethod[];
+  upi: { vpa: string; payee: string } | null;
+  supportEmail: string;
 }
 
 export interface CreateOrderResponse {
   orderId: string;
-  razorpayOrderId: string;
-  keyId: string;
+  orderCode: string;
   amount: number;
+  subtotal: number;
+  shippingPaise: number;
   currency: string;
+  paymentMethod: PaymentMethod;
+  razorpayOrderId?: string;
+  keyId?: string;
+  upi?: { vpa: string; payee: string; intent: string };
 }
 
 export interface VerifyPaymentRequest {
@@ -63,10 +86,31 @@ export interface VerifyPaymentRequest {
   razorpay_signature: string;
 }
 
-export type PaymentStatus = "pending" | "paid" | "failed";
-export type Fulfillment = "unfulfilled" | "shipped" | "delivered" | "cancelled";
+export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
+export type Fulfillment = "unfulfilled" | "packed" | "shipped" | "delivered" | "cancelled";
 
-export const FULFILLMENT_STATES: Fulfillment[] = ["unfulfilled", "shipped", "delivered", "cancelled"];
+export const FULFILLMENT_STATES: Fulfillment[] = ["unfulfilled", "packed", "shipped", "delivered", "cancelled"];
+
+const NEXT_FULFILLMENT: Record<Fulfillment, Fulfillment[]> = {
+  unfulfilled: ["packed", "shipped", "cancelled"],
+  packed: ["shipped", "cancelled"],
+  shipped: ["delivered"],
+  delivered: [],
+  cancelled: [],
+};
+
+/** Legal next statuses. The current status is not included. */
+export function nextFulfillments(from: Fulfillment): Fulfillment[] {
+  return NEXT_FULFILLMENT[from];
+}
+
+export interface ShipmentInfo {
+  courier: string;
+  trackingRef: string;
+  trackingUrl: string;
+  dispatchedAt: string | null;
+  deliveredAt: string | null;
+}
 
 export interface OrderItem {
   productId: number | null;
@@ -77,12 +121,16 @@ export interface OrderItem {
 
 /** What a customer sees on the confirmation page and in their account. */
 export interface OrderSummary {
-  /** Random public id used in URLs. */
+  /** Random public id used in the private confirmation URL. */
   id: string;
   /** Sequential order number customers can quote. */
   number: number;
+  code: string;
   status: PaymentStatus;
   fulfillment: Fulfillment;
+  paymentMethod: PaymentMethod;
+  subtotal: number;
+  shippingPaise: number;
   amount: number;
   currency: string;
   customerName: string;
@@ -90,23 +138,47 @@ export interface OrderSummary {
   items: OrderItem[];
   createdAt: string;
   paidAt: string | null;
+  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl"> | null;
 }
 
 export interface AdminOrder {
   id: number;
   publicId: string;
+  code: string;
   status: PaymentStatus;
   fulfillment: Fulfillment;
+  paymentMethod: PaymentMethod;
+  subtotal: number;
+  shippingPaise: number;
   amount: number;
   currency: string;
+  notes: string;
+  upiReference: string;
+  stockHeld: boolean;
   razorpayOrderId: string | null;
   razorpayPaymentId: string | null;
   /** Null for guest checkouts. */
   customerId: number | null;
   customer: CustomerDetails;
   items: OrderItem[];
+  shipment: ShipmentInfo | null;
   createdAt: string;
   paidAt: string | null;
+}
+
+/** Safe fields returned after the customer proves order code + email or phone. */
+export interface TrackedOrder {
+  code: string;
+  createdAt: string;
+  items: Pick<OrderItem, "name" | "quantity" | "unitPrice">[];
+  subtotal: number;
+  shippingPaise: number;
+  amount: number;
+  currency: string;
+  paymentMethod: PaymentMethod;
+  status: PaymentStatus;
+  fulfillment: Fulfillment;
+  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl"> | null;
 }
 
 // ---------- Customer accounts ----------
@@ -134,10 +206,18 @@ export interface SavedAddress {
 export type AddressInput = Omit<SavedAddress, "id" | "isDefault"> & { isDefault?: boolean };
 
 export interface AdminStats {
+  /** Verified payments only. Pending, failed and COD-not-yet-collected are excluded. */
   revenue: number;
+  refunded: number;
+  pendingValue: number;
+  codOutstanding: number;
   paidOrders: number;
   pendingOrders: number;
+  awaitingVerification: number;
   unfulfilledOrders: number;
+  shippedOrders: number;
+  deliveredOrders: number;
+  cancelledOrders: number;
   products: number;
   lowStock: Pick<StoreProduct, "id" | "name" | "stock">[];
   recentOrders: AdminOrder[];

@@ -10,6 +10,7 @@ const tabs: { label: string; value: PaymentStatus | "" }[] = [
   { label: "Paid", value: "paid" },
   { label: "Awaiting payment", value: "pending" },
   { label: "Failed", value: "failed" },
+  { label: "Refunded", value: "refunded" },
 ];
 
 export default function Orders() {
@@ -17,14 +18,21 @@ export default function Orders() {
   const status = (params.get("status") ?? "") as PaymentStatus | "";
   const { data, error, loading } = useAdminQuery<AdminOrder[]>(status ? `/orders?status=${status}` : "/orders");
   const [query, setQuery] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   const orders = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!data || !q) return data ?? [];
-    return data.filter((o) =>
-      [String(o.id), o.publicId, o.customer.name, o.customer.email, o.customer.phone, o.razorpayPaymentId ?? ""].some((v) => v.toLowerCase().includes(q)),
-    );
-  }, [data, query]);
+    return (data ?? []).filter((o) => {
+      const day = o.createdAt.slice(0, 10);
+      if (from && day < from) return false;
+      if (to && day > to) return false;
+      if (!q) return true;
+      return [o.code, String(o.id), o.publicId, o.customer.name, o.customer.email, o.customer.phone, o.razorpayPaymentId ?? ""].some((v) =>
+        v.toLowerCase().includes(q),
+      );
+    });
+  }, [data, query, from, to]);
 
   return (
     <>
@@ -53,13 +61,18 @@ export default function Orders() {
             </button>
           ))}
         </div>
-        <input
-          type="search"
-          placeholder="Search name, email, phone, order #…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className={`${inputClass} max-w-xs`}
-        />
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="search"
+            aria-label="Search orders"
+            placeholder="Search name, email, phone, order code…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${inputClass} max-w-xs`}
+          />
+          <input type="date" aria-label="From date" value={from} onChange={(e) => setFrom(e.target.value)} className={inputClass} />
+          <input type="date" aria-label="To date" value={to} onChange={(e) => setTo(e.target.value)} className={inputClass} />
+        </div>
       </div>
 
       {error && <Alert>{error}</Alert>}
@@ -69,10 +82,11 @@ export default function Orders() {
 }
 
 function downloadCsv(orders: AdminOrder[]) {
-  const header = ["Order", "Date (UTC)", "Status", "Fulfilment", "Total (INR)", "Name", "Email", "Phone", "Address", "City", "State", "PIN", "Items", "Razorpay payment"];
+  const header = ["Order", "Date (UTC)", "Payment method", "Status", "Fulfilment", "Total (INR)", "Name", "Email", "Phone", "Address", "City", "State", "PIN", "Items", "Razorpay payment"];
   const rows = orders.map((o) => [
-    o.id,
+    o.code,
     o.createdAt,
+    o.paymentMethod,
     o.status,
     o.fulfillment,
     (o.amount / 100).toFixed(2),

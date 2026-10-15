@@ -10,10 +10,18 @@ import { emailConfigured } from "./email";
 import { accountRouter } from "./routes/account";
 import { adminRouter } from "./routes/admin";
 import { razorpayWebhook, storeRouter } from "./routes/store";
+import { waitlistRouter } from "./routes/waitlist";
 
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 
 app.post("/api/webhooks/razorpay", ...razorpayWebhook);
 
@@ -23,6 +31,7 @@ app.use(cookieParser());
 app.use("/uploads", express.static(config.uploadsDir, { immutable: true, maxAge: "1y", fallthrough: false }));
 
 app.use("/api/admin", adminRouter);
+app.use("/api/waitlist", waitlistRouter);
 if (config.siteVersion === "v2") {
   app.use("/api/account", accountRouter);
   app.use("/api", storeRouter);
@@ -48,11 +57,19 @@ app.listen(config.port, (err) => {
   }
   console.log(`API ready on http://localhost:${config.port}`);
   console.log(
-    config.siteVersion === "v2"
-      ? "SITE_VERSION=v2 — direct store (shop, cart, checkout, accounts) is on."
-      : "SITE_VERSION=v1 — Amazon-only site; store and account APIs are off.",
+    config.siteVersion === "v0"
+      ? "SITE_VERSION=v0 — public site is the waitlist. Signups are stored for /admin."
+      : config.siteVersion === "v2"
+        ? "SITE_VERSION=v2 — direct store (shop, cart, checkout, accounts) is on."
+        : "SITE_VERSION=v1 — Amazon-only site; store and account APIs are off.",
   );
   if (!emailConfigured) console.warn("RESEND_API_KEY / EMAIL_FROM not set — emails (password resets) are printed here instead of sent.");
   if (config.testPayments) console.warn("TEST_PAYMENTS is on — checkout shows simulate-payment buttons. Turn it off before going live.");
-  if (!razorpayConfigured) console.warn("Razorpay keys are missing — checkout will be disabled until RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are set.");
+  if (!razorpayConfigured && !config.codEnabled && !config.upi.vpa) {
+    console.warn("No payment method is configured — checkout will refuse orders until Razorpay, COD_ENABLED, or UPI_VPA is set.");
+  }
+  if (!config.shipping.configured) console.warn("SHIPPING_PAISE is unset — checkout shows shipping as not configured and charges ₹0.");
+  if (config.supportEmail.endsWith("@yourdomain.com")) console.warn("SUPPORT_EMAIL is still the placeholder. Set it before launch.");
+  if (config.supabase.url && config.supabase.serviceRoleKey) console.log("Waitlist storage: Supabase.");
+  else if (config.siteVersion === "v0") console.warn("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set — waitlist emails are stored in the local database only.");
 });

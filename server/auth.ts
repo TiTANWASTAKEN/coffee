@@ -25,9 +25,22 @@ function cookieOptions(req: Request): CookieOptions {
   return { httpOnly: true, sameSite: "strict", secure: req.secure, path: "/" };
 }
 
+export function createAdminToken(): string {
+  return jwt.sign({ sub: config.admin.email, role: "admin" }, config.jwtSecret, { expiresIn: `${SESSION_DAYS}d` });
+}
+
+export function readAdminToken(token: string | undefined): string | null {
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, config.jwtSecret) as jwt.JwtPayload;
+    return payload.role === "admin" && typeof payload.sub === "string" ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 export function startSession(req: Request, res: Response): void {
-  const token = jwt.sign({ sub: config.admin.email, role: "admin" }, config.jwtSecret, { expiresIn: `${SESSION_DAYS}d` });
-  res.cookie(COOKIE, token, { ...cookieOptions(req), maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000 });
+  res.cookie(COOKIE, createAdminToken(), { ...cookieOptions(req), maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000 });
 }
 
 export function endSession(req: Request, res: Response): void {
@@ -36,13 +49,7 @@ export function endSession(req: Request, res: Response): void {
 
 export function sessionEmail(req: Request): string | null {
   const token = req.cookies?.[COOKIE];
-  if (typeof token !== "string") return null;
-  try {
-    const payload = jwt.verify(token, config.jwtSecret) as jwt.JwtPayload;
-    return payload.role === "admin" && typeof payload.sub === "string" ? payload.sub : null;
-  } catch {
-    return null;
-  }
+  return readAdminToken(typeof token === "string" ? token : undefined);
 }
 
 export const requireAdmin: RequestHandler = (req, _res, next) => {

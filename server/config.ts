@@ -29,7 +29,9 @@ if (!jwtSecret) {
 }
 
 const siteVersion = process.env.SITE_VERSION?.trim() || "v1";
-if (siteVersion !== "v1" && siteVersion !== "v2") throw new Error(`SITE_VERSION must be "v1" or "v2" (got "${siteVersion}").`);
+if (siteVersion !== "v0" && siteVersion !== "v1" && siteVersion !== "v2") {
+  throw new Error(`SITE_VERSION must be "v0", "v1" or "v2" (got "${siteVersion}").`);
+}
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
@@ -57,5 +59,22 @@ export const config = {
     keyId: process.env.RAZORPAY_KEY_ID?.trim() ?? "",
     keySecret: process.env.RAZORPAY_KEY_SECRET?.trim() ?? "",
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim() ?? "",
+  },
+  /** Explicit paise. Unset means "not chosen yet" and checkout shows ₹0 rather than a guessed rate. */
+  shipping: {
+    configured: process.env.SHIPPING_PAISE !== undefined && process.env.SHIPPING_PAISE.trim() !== "",
+    paise: Math.max(0, Number(process.env.SHIPPING_PAISE ?? 0) || 0),
+  },
+  codEnabled: process.env.COD_ENABLED === "true",
+  upi: {
+    vpa: process.env.UPI_VPA?.trim() ?? "",
+    payee: process.env.UPI_PAYEE_NAME?.trim() || "Bitter Truth Coffee",
+  },
+  adminNotifyEmail: process.env.ADMIN_NOTIFY_EMAIL?.trim() ?? "",
+  supportEmail: process.env.SUPPORT_EMAIL?.trim() || "hello@yourdomain.com",
+  /** Service role stays on the server. It is never sent to the browser. */
+  supabase: {
+    url: (process.env.SUPABASE_URL?.trim() ?? "").replace(/\/+$/, ""),
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? "",
   },
 };

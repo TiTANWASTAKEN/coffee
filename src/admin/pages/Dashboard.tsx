@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import type { AdminStats } from "@shared/store";
-import { formatPrice } from "@/lib/format";
+import { formatDate, formatPrice } from "@/lib/format";
 import { useAdminQuery } from "../auth";
 import { OrdersTable } from "../OrdersTable";
 import { Alert, Card, Loading, PageTitle } from "../ui";
@@ -15,11 +15,15 @@ export default function Dashboard() {
       {loading && !stats && <Loading />}
       {stats && (
         <div className="flex flex-col gap-6">
+          <WaitlistCard />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Revenue" value={formatPrice(stats.revenue)} hint="Paid, excluding cancelled" />
+            <Stat label="Verified revenue" value={formatPrice(stats.revenue)} hint="Paid orders, excluding cancelled" />
+            <Stat label="Awaiting verification" value={stats.awaitingVerification} hint={formatPrice(stats.pendingValue) + " not collected"} to="/admin/orders?status=pending" />
+            <Stat label="COD outstanding" value={formatPrice(stats.codOutstanding)} hint="Not collected until delivery" />
+            <Stat label="Refunded" value={formatPrice(stats.refunded)} />
+            <Stat label="To ship" value={stats.unfulfilledOrders} hint={`${stats.shippedOrders} shipped · ${stats.deliveredOrders} delivered`} to="/admin/orders?status=paid" />
             <Stat label="Paid orders" value={stats.paidOrders} />
-            <Stat label="To ship" value={stats.unfulfilledOrders} hint="Paid but not yet shipped" to="/admin/orders?status=paid" />
-            <Stat label="Awaiting payment" value={stats.pendingOrders} hint="Checkout started, not paid" to="/admin/orders?status=pending" />
+            <Stat label="Cancelled or refunded" value={stats.cancelledOrders} />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
@@ -62,6 +66,34 @@ export default function Dashboard() {
         </div>
       )}
     </>
+  );
+}
+
+function WaitlistCard() {
+  const { data } = useAdminQuery<{ email: string; createdAt: string }[]>("/waitlist");
+  const latest = data?.slice(0, 5) ?? [];
+  return (
+    <Card
+      title={`Waitlist${data ? ` (${data.length})` : ""}`}
+      actions={
+        <Link to="/admin/waitlist" className="text-body-sm text-muted hover:text-ivory">
+          View all
+        </Link>
+      }
+    >
+      {latest.length === 0 ? (
+        <p className="text-body-sm text-muted">No emails yet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line">
+          {latest.map((entry) => (
+            <li key={entry.email} className="flex items-center justify-between gap-4 py-2.5 text-body-sm">
+              <span>{entry.email}</span>
+              <span className="text-faint">{formatDate(entry.createdAt, false)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

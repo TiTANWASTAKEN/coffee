@@ -1,0 +1,23 @@
+# Free hosting for the waitlist.
+# /api/* runs in a Netlify Function and stores emails in Supabase.
+# Checkout, payments and the product database still need the Node server.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

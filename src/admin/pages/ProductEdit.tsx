@@ -26,6 +26,7 @@ function ProductForm({ product, onChange }: { product?: StoreProduct; onChange?:
   const navigate = useNavigate();
   const [name, setName] = useState(product?.name ?? "");
   const [slug, setSlug] = useState(product?.slug ?? "");
+  const [sku, setSku] = useState(product?.sku ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
   const [price, setPrice] = useState(product ? String(product.price / 100) : "");
   const [stock, setStock] = useState(product ? String(product.stock) : "0");
@@ -39,7 +40,7 @@ function ProductForm({ product, onChange }: { product?: StoreProduct; onChange?:
     const paise = Math.round(Number(price) * 100);
     if (!Number.isFinite(paise) || paise < 100) return setMessage({ tone: "error", text: "Price must be at least ₹1." });
 
-    const body: ProductInput = { name, slug: slug || undefined, description, price: paise, stock: Number(stock), active };
+    const body: ProductInput = { name, slug: slug || undefined, sku: sku || undefined, description, price: paise, stock: Number(stock), active };
     setSaving(true);
     setMessage(null);
     try {
@@ -99,6 +100,9 @@ function ProductForm({ product, onChange }: { product?: StoreProduct; onChange?:
             <div className="grid gap-5 sm:grid-cols-2">
               <FormField label="Name" className="sm:col-span-2">
                 <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+              </FormField>
+              <FormField label="SKU" hint="Your own stock code. Leave blank to use the URL slug.">
+                <input maxLength={80} value={sku} onChange={(e) => setSku(e.target.value)} className={inputClass} />
               </FormField>
               <FormField label="Description" className="sm:col-span-2">
                 <textarea rows={5} maxLength={5000} value={description} onChange={(e) => setDescription(e.target.value)} className={`${inputClass} py-2.5`} />

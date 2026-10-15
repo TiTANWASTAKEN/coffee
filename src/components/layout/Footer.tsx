@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowUp } from "lucide-react";
+import { storeEnabled, waitlistEnabled } from "@/config/features";
 import { legalNav, primaryNav, site } from "@/config/site";
 import { products } from "@/data/products";
 import { ShopButton } from "@/components/ui/BuyButton";
@@ -22,7 +23,7 @@ export function Footer({ inert }: { inert?: boolean }) {
         <div className="lg:col-span-5">
           <p className="eyebrow text-muted">{site.name}</p>
           <p className="mt-6 max-w-sm font-display text-display-sm font-light">{site.tagline}</p>
-          <ShopButton variant="outline" size="sm" className="mt-10" />
+          {!waitlistEnabled && <ShopButton variant="outline" size="sm" className="mt-10" />}
         </div>
 
         <div className="grid grid-cols-2 gap-x-8 gap-y-12 sm:grid-cols-4 lg:col-span-7">
@@ -35,6 +36,7 @@ export function Footer({ inert }: { inert?: boolean }) {
               </li>
             ))}
           </Column>
+          {!waitlistEnabled && (
           <Column title="The Coffee">
             {products.map((p) => (
               <li key={p.id}>
@@ -44,6 +46,7 @@ export function Footer({ inert }: { inert?: boolean }) {
               </li>
             ))}
           </Column>
+          )}
           <Column title="Social">
             {site.social.map((s) => (
               <li key={s.label}>
@@ -54,6 +57,13 @@ export function Footer({ inert }: { inert?: boolean }) {
             ))}
           </Column>
           <Column title="Legal">
+            {storeEnabled && (
+              <li>
+                <Link to="/track-order" className="link-underline transition-colors hover:text-ivory">
+                  Track Your Order
+                </Link>
+              </li>
+            )}
             {legalNav.map((item) => (
               <li key={item.to}>
                 <Link to={item.to} className="link-underline transition-colors hover:text-ivory">

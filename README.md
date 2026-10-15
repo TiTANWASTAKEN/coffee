@@ -10,20 +10,25 @@ The company name lives in `src/config/site.ts` (`name: "Bitter Truth Coffee"`, `
 | Dark Truth   | 100% Robusta              |
 | Bitter Truth | 70% Arabica / 30% Robusta |
 
-**Live today (v1):** a simple brand site — every buy button goes to Amazon. No server needed; it can be hosted statically.
+**v0 — waitlist:** the public site is an email list. Every signup is saved and shown in `/admin` under Waitlist.
 
-**Built and hidden (v2):** a direct store — customers add coffees to a cart and pay on the site through **Razorpay** (UPI, cards, netbanking, wallets), with optional customer accounts (saved addresses, order history and tracking). A password-protected **admin** at `/admin` shows orders and sales, and lets you manage products, prices, stock and images.
+**v1 — Amazon:** a brand site — every buy button goes to Amazon. No server needed; it can be hosted statically.
+
+**v2 — store:** customers add coffees to a cart and pay on the site through **Razorpay** (UPI, cards, netbanking, wallets), with optional customer accounts (saved addresses, order history and tracking). The admin shows orders and sales, and lets you manage products, prices, stock and images.
 
 ### Choosing the version
 
 One setting in `.env` picks the version — restart `npm run dev` (or rebuild) after changing it:
 
 ```bash
-SITE_VERSION=v1   # Amazon-only brand site (default)
+SITE_VERSION=v0   # public waitlist; emails appear in /admin
+SITE_VERSION=v1   # Amazon-only brand site
 SITE_VERSION=v2   # direct store: shop, cart, Razorpay checkout, customer accounts
 ```
 
-In **v1** the shop, cart, checkout, order and account pages don't exist (they 404), the cart and account icons are hidden, prices aren't shown, the site makes no API calls, and the server switches the store and account APIs off. The admin works in both versions.
+In **v0** the public site is the waitlist. The shop, cart and account pages are not shown. Signups are stored in the database and listed after you sign in at `/admin`.
+
+In **v1** the shop, cart, checkout, order and account pages don't exist (they 404), the cart and account icons are hidden, prices aren't shown, the site makes no API calls, and the server switches the store and account APIs off. The admin works in every version.
 
 **Stack:** React 19 · TypeScript · Vite 7 · Tailwind CSS 4 · Framer Motion 12 · React Router 7 · Lucide icons · self-hosted fonts (Playfair 2 + Instrument Sans via Fontsource).
 **Server:** Express 5 · SQLite (Node's built-in `node:sqlite`) · Multer for uploads · Razorpay Orders API.
@@ -56,11 +61,17 @@ npm run typecheck  # TypeScript only
 | `JWT_SECRET` | Signs admin and customer sessions. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay Dashboard → Account & Settings → API Keys. Use **Test Mode** keys while developing. |
 | `RAZORPAY_WEBHOOK_SECRET` | Optional, recommended in production (see below). |
-| `SITE_VERSION` | `v1` (Amazon-only, default) or `v2` (direct store). See above. |
+| `SITE_VERSION` | `v0` (waitlist), `v1` (Amazon-only) or `v2` (direct store). See above. |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Free Supabase project. The service-role key stays on the server and must never use a `VITE_` name. Without these, waitlist emails stay in the local database. |
 | `TEST_PAYMENTS` | Development only. `true` adds "Simulate payment" buttons at checkout. Ignored with live keys. |
-| `PUBLIC_URL` | The site's public address, used in password-reset links. Default `http://localhost:5173`; **must be your real `https://` domain in production.** |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Sends password-reset emails through [Resend](https://resend.com). Without them, reset links are printed in the server terminal. |
-| `DATA_DIR` | Optional. Where `store.db` and uploaded images live. Default `./data`. |
+| `PUBLIC_URL` | The site's public address, used in password-reset and order-tracking links. Default `http://localhost:5173`; **must be your real `https://` domain in production.** |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Sends password-reset and order emails through [Resend](https://resend.com). Without them, the message is printed in the server terminal. That is not a delivered email. |
+| `SHIPPING_PAISE` | Shipping charge in paise (`100` = ₹1). Set `0` for free shipping. If unset, checkout shows shipping as not configured and charges ₹0. |
+| `COD_ENABLED` | `true` offers cash on delivery. The order stays unpaid until you mark it collected in the admin. |
+| `UPI_VPA`, `UPI_PAYEE_NAME` | Optional manual UPI. A customer reference is stored only; it never marks the order paid. |
+| `ADMIN_NOTIFY_EMAIL` | Optional extra copy of each order email. |
+| `SUPPORT_EMAIL` | Shown in order emails. Default `hello@yourdomain.com` until you set yours. |
+| `DATA_DIR` | Optional. Where `store.db` and uploaded images live. Default `./data`. Back this directory up. |
 | `PORT` | Optional. API port, default `4000`. |
 
 Without Razorpay keys the site still runs, but checkout shows "Payments are not set up yet".
@@ -75,6 +86,7 @@ Without Razorpay keys the site still runs, but checkout shows "Payments are not 
 | `/shop/:slug` | Detail page for products added in the admin |
 | `/checkout` | Contact + shipping form, order summary, Pay button |
 | `/order/:id` | Confirmation page (the id is a random token, not the order number) |
+| `/track-order` | Customer tracking. Needs the order code and the email or phone on the order. |
 
 - The **cart** lives in `localStorage` and opens as a drawer from the bag icon in the navbar.
 - **Prices and stock always come from the server.** The browser only sends product ids and quantities; the server recalculates the total and checks stock before creating the Razorpay order.
@@ -116,8 +128,8 @@ If a customer pays and closes the tab before being redirected, the webhook still
 
 Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
-- **Dashboard** — revenue, paid orders, orders waiting to ship, abandoned checkouts, low-stock products, recent orders.
-- **Orders** — filter by payment status, search by name / email / phone / order number, export CSV. Each order shows items, customer and shipping address, whether it was a guest or signed-in checkout, Razorpay order + payment IDs, and lets you set fulfilment (unfulfilled → shipped → delivered / cancelled).
+- **Dashboard** — verified revenue (pending and unpaid COD are shown separately and are not counted as collected), orders waiting to ship, refunds, low-stock products, recent orders.
+- **Orders** — filter by payment status and date, search by name / email / phone / order code, export CSV. Open an order to verify a UPI or COD payment, add courier tracking, resend the email, refund (recorded here; you still return the money in Razorpay), or move fulfilment only along the allowed steps. Unverified non-COD orders cannot be packed or shipped.
 - **Products** — list with price, quantity in stock and status. Create, edit, hide or delete products; upload up to 12 images each (JPG/PNG/WebP/AVIF/GIF, 5 MB max), reorder them and pick the cover. Uploaded images replace the placeholder packshot and gallery on the matching coffee page.
 
 On first run the database is seeded with the three coffees at placeholder prices (₹499 / ₹449 / ₹479) and 25 units each — **set the real prices and stock in the admin before launch.**
@@ -128,16 +140,25 @@ Sessions are an httpOnly, SameSite=Strict cookie that lasts 7 days. Login is rat
 
 ## Deploying
 
-**v1:** `npm run build` and host `dist/` on any static host (Vercel/Netlify — `vercel.json` and `public/_redirects` are already set up). The admin won't work there, since it needs the API.
+**v0, free:** Netlify hosts the site and a function. Supabase’s free database stores the emails. Checkout is not part of this deploy.
 
-**v2:** set `SITE_VERSION=v2` on the host (it's read at build time and by the server); the site needs a Node server (for payments, accounts, the admin and the database), so a static host alone is no longer enough. Use any host that runs a long-lived Node 22 process **with a persistent disk** — e.g. Render, Railway, Fly.io or a VPS:
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Open the SQL editor and run `supabase/waitlist.sql`.
+3. In Supabase → Project Settings → API, copy the project URL and the `service_role` key.
+4. In Netlify → Site configuration → Environment variables, set `SITE_VERSION=v0`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `JWT_SECRET`. Do not commit those values.
+5. Publish this repo. The build command is `npm run build` and the publish directory is `dist`.
+6. Open `/admin`, sign in, and the Waitlist page lists every email.
+
+**v1:** `npm run build` and host `dist/` on any static host. `netlify.toml`, `vercel.json` and `public/_redirects` send unknown paths to `index.html`. The admin and checkout will not work on a static host, because they need the API.
+
+**v2:** set `SITE_VERSION=v2` on the host (it's read at build time and by the server). The shop needs a long-lived Node 22 process **with a persistent disk** — for example Render, Railway, Fly.io or a VPS. Netlify can still publish the static `dist/` folder, but it will not run checkout or keep the SQLite order database. Supabase’s free tier does not remove Razorpay’s per-payment fee.
 
 1. Build command: `npm install && npm run build`
 2. Start command: `npm start`
 3. Set the environment variables above, and point `DATA_DIR` at the persistent disk (e.g. `/var/data`) so orders and images survive redeploys.
 4. Serve over HTTPS (the admin cookie is marked `Secure` behind HTTPS automatically).
 
-Back up `DATA_DIR` regularly — it contains every order and uploaded image.
+Back up `DATA_DIR` regularly when you run the store server — it contains `store.db` and every uploaded image. To restore, stop the server, replace that directory from the backup, and start again. Waitlist emails stored in Supabase are backed up from the Supabase dashboard.
 
 ---
 

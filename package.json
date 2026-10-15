@@ -13,6 +13,7 @@
     "build": "tsc -b && vite build",
     "start": "tsx --disable-warning=ExperimentalWarning server/index.ts",
     "typecheck": "tsc -b --noEmit",
+    "test": "tsx --test server/commerce.test.ts server/orders.integration.test.ts server/supabaseWaitlist.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

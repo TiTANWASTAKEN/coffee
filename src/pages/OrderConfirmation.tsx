@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router";
 import type { OrderSummary } from "@shared/store";
 import { OrderTracker } from "@/components/account/OrderTracker";
 import { PageTransition } from "@/components/layout/PageTransition";
-import { ButtonLink } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
+import { Field } from "@/components/ui/Field";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { formatDate, formatPrice } from "@/lib/format";
@@ -63,11 +64,16 @@ export default function OrderConfirmation() {
                   ? `We’ve received your order and will email ${order.email} when it ships.`
                   : order.status === "failed"
                     ? "Your payment didn’t go through and you haven’t been charged. Your cart is still saved."
-                    : "We’re waiting for the bank to confirm your payment. This page will update automatically."}
+                    : order.paymentMethod === "cod"
+                      ? "Your order is placed. Payment is due when it is delivered."
+                      : order.paymentMethod === "upi"
+                        ? "Your order is placed, but it is not paid yet. We will not ship it until the payment is verified."
+                        : "We’re waiting for the bank to confirm your payment. This page will update automatically."}
               </p>
               {order.status === "paid" && !customer && (
                 <p className="mt-6 max-w-md text-body-sm text-faint">Bookmark this page — it’s where you can track your order.</p>
               )}
+              {order.status === "pending" && order.paymentMethod === "upi" && <UpiReference publicId={order.id} />}
               <div className="mt-10 flex flex-wrap gap-4">
                 {customer && (
                   <ButtonLink to="/account">
@@ -84,7 +90,7 @@ export default function OrderConfirmation() {
               <dl className="grid grid-cols-3 gap-4 text-body-sm">
                 <div>
                   <dt className="eyebrow text-faint">Order</dt>
-                  <dd className="mt-1 tabular-nums text-ivory">#{order.number}</dd>
+                  <dd className="mt-1 tabular-nums text-ivory">{order.code}</dd>
                 </div>
                 <div>
                   <dt className="eyebrow text-faint">Placed</dt>
@@ -114,10 +120,45 @@ export default function OrderConfirmation() {
                 <span className="eyebrow text-muted">{order.status === "paid" ? "Total paid" : "Total"}</span>
                 <span className="font-display text-display-xs tabular-nums">{formatPrice(order.amount)}</span>
               </p>
+              {order.shipment?.trackingUrl && (
+                <p className="mt-4 text-body-sm">
+                  <a href={order.shipment.trackingUrl} className="underline" target="_blank" rel="noreferrer">
+                    Track shipment{order.shipment.courier ? ` · ${order.shipment.courier}` : ""}
+                  </a>
+                </p>
+              )}
             </div>
           </div>
         )}
       </section>
     </PageTransition>
+  );
+}
+
+function UpiReference({ publicId }: { publicId: string }) {
+  const [reference, setReference] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await api("/orders/" + encodeURIComponent(publicId) + "/upi-reference", { method: "POST", body: { reference } });
+      setSent(true);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="mt-8 max-w-md border border-line p-5">
+      <p className="text-body-sm text-muted">If you have paid, you can leave the UPI reference here. This does not mark the order paid.</p>
+      <Field label="UPI reference" value={reference} onChange={setReference} required className="mt-5" />
+      {error && <p className="mt-3 text-body-sm text-ivory">{error}</p>}
+      <Button type="submit" size="sm" className="mt-5" disabled={sent}>
+        {sent ? "Reference saved" : "Submit reference"}
+      </Button>
+    </form>
   );
 }

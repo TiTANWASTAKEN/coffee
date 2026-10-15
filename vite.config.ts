@@ -7,7 +7,9 @@ const apiTarget = `http://localhost:${process.env.PORT ?? 4000}`;
 
 export default defineConfig(({ mode }) => {
   const siteVersion = loadEnv(mode, process.cwd(), "").SITE_VERSION?.trim() || "v1";
-  if (siteVersion !== "v1" && siteVersion !== "v2") throw new Error(`SITE_VERSION must be "v1" or "v2" (got "${siteVersion}").`);
+  if (siteVersion !== "v0" && siteVersion !== "v1" && siteVersion !== "v2") {
+    throw new Error(`SITE_VERSION must be "v0", "v1" or "v2" (got "${siteVersion}").`);
+  }
 
   return {
     define: { __SITE_VERSION__: JSON.stringify(siteVersion) },

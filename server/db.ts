@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import type { AdminOrder, CustomerDetails, Fulfillment, OrderItem, OrderSummary, PaymentStatus, StoreProduct } from "../shared/store";
+import type { AdminOrder, CustomerDetails, Fulfillment, OrderItem, OrderSummary, PaymentMethod, PaymentStatus, ShipmentInfo, StoreProduct } from "../shared/store";
+import { formatOrderCode, RELEASE_STOCK_SQL, RESERVE_STOCK_SQL } from "./commerce";
 import { config } from "./config";
 
 export const db = new DatabaseSync(path.join(config.dataDir, "store.db"));
@@ -55,6 +56,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS order_items_order ON order_items(order_id);
   CREATE INDEX IF NOT EXISTS orders_status ON orders(status);
 
+  CREATE TABLE IF NOT EXISTS waitlist (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    email      TEXT    NOT NULL UNIQUE,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS customers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     email           TEXT    NOT NULL UNIQUE,
@@ -95,6 +102,62 @@ if (!orderColumns.includes("customer_id")) {
 }
 db.exec("CREATE INDEX IF NOT EXISTS orders_customer ON orders(customer_id)");
 
+function hasColumn(table: string, name: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).some((column) => column.name === name);
+}
+
+function addColumn(table: string, name: string, definition: string) {
+  if (!hasColumn(table, name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+}
+
+addColumn("products", "sku", "TEXT NOT NULL DEFAULT ''");
+addColumn("orders", "payment_method", "TEXT NOT NULL DEFAULT 'razorpay'");
+addColumn("orders", "subtotal", "INTEGER NOT NULL DEFAULT 0");
+addColumn("orders", "shipping_paise", "INTEGER NOT NULL DEFAULT 0");
+addColumn("orders", "notes", "TEXT NOT NULL DEFAULT ''");
+addColumn("orders", "upi_reference", "TEXT NOT NULL DEFAULT ''");
+addColumn("orders", "confirmation_sent", "INTEGER NOT NULL DEFAULT 0");
+addColumn("orders", "confirmation_letter", "TEXT NOT NULL DEFAULT ''");
+addColumn("orders", "stock_held", "INTEGER NOT NULL DEFAULT 0");
+addColumn("orders", "idempotency_key", "TEXT");
+db.exec(`
+  UPDATE products SET sku = slug WHERE sku = '';
+  UPDATE orders SET subtotal = amount WHERE subtotal = 0 AND amount > 0;
+  CREATE UNIQUE INDEX IF NOT EXISTS orders_idempotency ON orders(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS payments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id            INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    provider            TEXT    NOT NULL,
+    provider_order_id   TEXT,
+    provider_payment_id TEXT,
+    amount              INTEGER NOT NULL,
+    currency            TEXT    NOT NULL DEFAULT 'INR',
+    status              TEXT    NOT NULL,
+    refund_status       TEXT    NOT NULL DEFAULT 'none',
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS payments_order ON payments(order_id);
+
+  CREATE TABLE IF NOT EXISTS shipments (
+    order_id      INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+    courier       TEXT    NOT NULL DEFAULT '',
+    tracking_ref  TEXT    NOT NULL DEFAULT '',
+    tracking_url  TEXT    NOT NULL DEFAULT '',
+    dispatched_at TEXT,
+    delivered_at  TEXT,
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    action     TEXT    NOT NULL,
+    detail     TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
 /** Runs `fn` inside a transaction, rolling back if it throws. */
 export function transaction<T>(fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");
@@ -113,6 +176,7 @@ export function transaction<T>(fn: () => T): T {
 interface ProductRow {
   id: number;
   slug: string;
+  sku: string;
   name: string;
   description: string;
   price: number;
@@ -127,6 +191,7 @@ function toProduct(row: ProductRow): StoreProduct {
   return {
     id: row.id,
     slug: row.slug,
+    sku: row.sku,
     name: row.name,
     description: row.description,
     price: row.price,
@@ -163,8 +228,14 @@ interface OrderRow {
   customer_id: number | null;
   status: PaymentStatus;
   fulfillment: Fulfillment;
+  payment_method: PaymentMethod;
+  subtotal: number;
+  shipping_paise: number;
   amount: number;
   currency: string;
+  notes: string;
+  upi_reference: string;
+  stock_held: number;
   customer_name: string;
   customer_email: string;
   customer_phone: string;
@@ -175,6 +246,15 @@ interface OrderRow {
   postal_code: string;
   created_at: string;
   paid_at: string | null;
+}
+
+interface ShipmentRow {
+  order_id: number;
+  courier: string;
+  tracking_ref: string;
+  tracking_url: string;
+  dispatched_at: string | null;
+  delivered_at: string | null;
 }
 
 interface OrderItemRow {
@@ -200,15 +280,40 @@ function itemsFor(orderIds: number[]): Map<number, OrderItem[]> {
   return byOrder;
 }
 
+function shipmentsFor(orderIds: number[]): Map<number, ShipmentInfo> {
+  const byOrder = new Map<number, ShipmentInfo>();
+  if (orderIds.length === 0) return byOrder;
+  const placeholders = orderIds.map(() => "?").join(",");
+  const rows = db.prepare(`SELECT * FROM shipments WHERE order_id IN (${placeholders})`).all(...orderIds) as unknown as ShipmentRow[];
+  for (const row of rows) {
+    byOrder.set(row.order_id, {
+      courier: row.courier,
+      trackingRef: row.tracking_ref,
+      trackingUrl: row.tracking_url,
+      dispatchedAt: row.dispatched_at,
+      deliveredAt: row.delivered_at,
+    });
+  }
+  return byOrder;
+}
+
 function toOrders(rows: OrderRow[]): AdminOrder[] {
   const items = itemsFor(rows.map((r) => r.id));
+  const shipments = shipmentsFor(rows.map((r) => r.id));
   return rows.map((row) => ({
     id: row.id,
     publicId: row.public_id,
+    code: formatOrderCode(row.id),
     status: row.status,
     fulfillment: row.fulfillment,
+    paymentMethod: row.payment_method,
+    subtotal: row.subtotal,
+    shippingPaise: row.shipping_paise,
     amount: row.amount,
     currency: row.currency,
+    notes: row.notes,
+    upiReference: row.upi_reference,
+    stockHeld: row.stock_held === 1,
     razorpayOrderId: row.razorpay_order_id,
     razorpayPaymentId: row.razorpay_payment_id,
     customerId: row.customer_id,
@@ -223,6 +328,7 @@ function toOrders(rows: OrderRow[]): AdminOrder[] {
       postalCode: row.postal_code,
     },
     items: items.get(row.id) ?? [],
+    shipment: shipments.get(row.id) ?? null,
     createdAt: row.created_at,
     paidAt: row.paid_at,
   }));
@@ -248,8 +354,12 @@ export function toOrderSummary(order: AdminOrder): OrderSummary {
   return {
     id: order.publicId,
     number: order.id,
+    code: order.code,
     status: order.status,
     fulfillment: order.fulfillment,
+    paymentMethod: order.paymentMethod,
+    subtotal: order.subtotal,
+    shippingPaise: order.shippingPaise,
     amount: order.amount,
     currency: order.currency,
     customerName: order.customer.name,
@@ -257,6 +367,24 @@ export function toOrderSummary(order: AdminOrder): OrderSummary {
     items: order.items,
     createdAt: order.createdAt,
     paidAt: order.paidAt,
+    shipment: order.shipment ? { courier: order.shipment.courier, trackingUrl: order.shipment.trackingUrl } : null,
+  };
+}
+
+export function toTrackedOrder(order: AdminOrder) {
+  const summary = toOrderSummary(order);
+  return {
+    code: summary.code,
+    createdAt: summary.createdAt,
+    items: summary.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
+    subtotal: summary.subtotal,
+    shippingPaise: summary.shippingPaise,
+    amount: summary.amount,
+    currency: summary.currency,
+    paymentMethod: summary.paymentMethod,
+    status: summary.status,
+    fulfillment: summary.fulfillment,
+    shipment: summary.shipment,
   };
 }
 
@@ -267,40 +395,132 @@ export function getOrder(where: { id: number } | { publicId: string } | { razorp
   return row && toOrders([row])[0];
 }
 
-export function insertOrder(publicId: string, customer: CustomerDetails, items: OrderItem[], customerId: number | null): number {
-  const amount = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+export interface NewOrder {
+  publicId: string;
+  customer: CustomerDetails;
+  items: OrderItem[];
+  customerId: number | null;
+  paymentMethod: PaymentMethod;
+  subtotal: number;
+  shippingPaise: number;
+  notes: string;
+  idempotencyKey: string | null;
+}
+
+/** Returns an existing order when the same idempotency key is sent again. */
+export function findIdempotentOrder(key: string): AdminOrder | undefined {
+  const row = db.prepare("SELECT id FROM orders WHERE idempotency_key = ?").get(key) as { id: number } | undefined;
+  return row ? getOrder({ id: row.id }) : undefined;
+}
+
+export function insertOrder(input: NewOrder): number {
+  const amount = input.subtotal + input.shippingPaise;
   return transaction(() => {
+    const reserve = db.prepare(RESERVE_STOCK_SQL);
+    for (const item of input.items) {
+      if (item.productId === null) throw new Error("Every new line needs a product.");
+      const result = reserve.run(item.quantity, item.productId, item.quantity);
+      if (result.changes !== 1) {
+        const product = getProductById(item.productId);
+        const name = product?.name ?? "An item";
+        throw new Error(product && product.stock > 0 ? `Only ${product.stock} of ${name} left in stock.` : `${name} is sold out.`);
+      }
+    }
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO orders (public_id, customer_id, amount, customer_name, customer_email, customer_phone,
+        `INSERT INTO orders (public_id, customer_id, payment_method, subtotal, shipping_paise, amount, notes,
+           idempotency_key, stock_held, customer_name, customer_email, customer_phone,
            address_line1, address_line2, city, state, postal_code)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(publicId, customerId, amount, customer.name, customer.email, customer.phone, customer.line1, customer.line2, customer.city, customer.state, customer.postalCode);
+      .run(
+        input.publicId,
+        input.customerId,
+        input.paymentMethod,
+        input.subtotal,
+        input.shippingPaise,
+        amount,
+        input.notes,
+        input.idempotencyKey,
+        input.customer.name,
+        input.customer.email,
+        input.customer.phone,
+        input.customer.line1,
+        input.customer.line2,
+        input.customer.city,
+        input.customer.state,
+        input.customer.postalCode,
+      );
     const orderId = Number(lastInsertRowid);
     const insertItem = db.prepare("INSERT INTO order_items (order_id, product_id, name, unit_price, quantity) VALUES (?, ?, ?, ?, ?)");
-    for (const item of items) insertItem.run(orderId, item.productId, item.name, item.unitPrice, item.quantity);
+    for (const item of input.items) insertItem.run(orderId, item.productId, item.name, item.unitPrice, item.quantity);
+    db.prepare("INSERT INTO payments (order_id, provider, amount, currency, status) VALUES (?, ?, ?, 'INR', 'pending')").run(orderId, input.paymentMethod, amount);
     return orderId;
   });
+}
+
+export function releaseStock(order: AdminOrder): void {
+  if (!order.stockHeld) return;
+  const release = db.prepare(RELEASE_STOCK_SQL);
+  for (const item of order.items) if (item.productId !== null) release.run(item.quantity, item.productId);
+  db.prepare("UPDATE orders SET stock_held = 0 WHERE id = ?").run(order.id);
+}
+
+export function recordAdminEvent(orderId: number | null, action: string, detail = ""): void {
+  db.prepare("INSERT INTO admin_events (order_id, action, detail) VALUES (?, ?, ?)").run(orderId, action, detail.slice(0, 500));
+}
+
+/** Claims one letter per kind. A webhook retry of the same letter does not send again; a later paid letter still can. */
+export function claimConfirmationEmail(orderId: number, letter: string): boolean {
+  const row = db.prepare("SELECT confirmation_letter FROM orders WHERE id = ?").get(orderId) as { confirmation_letter: string } | undefined;
+  if (!row || row.confirmation_letter === letter) return false;
+  db.prepare("UPDATE orders SET confirmation_sent = 1, confirmation_letter = ? WHERE id = ?").run(letter, orderId);
+  return true;
 }
 
 /**
  * Marks an order paid and takes the items out of stock. Safe to call more than
  * once for the same order (the browser callback and the webhook both call it).
  */
-export function markOrderPaid(razorpayOrderId: string, razorpayPaymentId: string): AdminOrder | undefined {
+export function markOrderPaid(razorpayOrderId: string, razorpayPaymentId: string, paidAmount?: number): AdminOrder | undefined {
   return transaction(() => {
     const order = getOrder({ razorpayOrderId });
     if (!order || order.status === "paid") return order;
+    if (order.status === "refunded" || order.status === "failed") return order;
+    if (paidAmount !== undefined && paidAmount !== order.amount) return order;
     db.prepare("UPDATE orders SET status = 'paid', razorpay_payment_id = ?, paid_at = datetime('now') WHERE id = ?").run(razorpayPaymentId, order.id);
-    const takeStock = db.prepare("UPDATE products SET stock = MAX(stock - ?, 0), updated_at = datetime('now') WHERE id = ?");
-    for (const item of order.items) if (item.productId !== null) takeStock.run(item.quantity, item.productId);
+    db.prepare(
+      "UPDATE payments SET status = 'paid', provider_order_id = ?, provider_payment_id = ? WHERE order_id = ? AND status = 'pending'",
+    ).run(razorpayOrderId, razorpayPaymentId, order.id);
+    // Orders placed before stock was reserved at checkout still need stock taken here, once.
+    if (!order.stockHeld) {
+      const takeStock = db.prepare("UPDATE products SET stock = MAX(stock - ?, 0), updated_at = datetime('now') WHERE id = ?");
+      for (const item of order.items) if (item.productId !== null) takeStock.run(item.quantity, item.productId);
+      db.prepare("UPDATE orders SET stock_held = 1 WHERE id = ?").run(order.id);
+    }
+    return getOrder({ id: order.id });
+  });
+}
+
+export function markOrderPaidById(orderId: number, reference: string): AdminOrder | undefined {
+  return transaction(() => {
+    const order = getOrder({ id: orderId });
+    if (!order || order.status === "paid") return order;
+    if (order.status !== "pending") return order;
+    db.prepare("UPDATE orders SET status = 'paid', razorpay_payment_id = ?, paid_at = datetime('now') WHERE id = ?").run(reference, order.id);
+    db.prepare("UPDATE payments SET status = 'paid', provider_payment_id = ? WHERE order_id = ? AND status = 'pending'").run(reference, order.id);
     return getOrder({ id: order.id });
   });
 }
 
 export function markOrderFailed(razorpayOrderId: string): void {
-  db.prepare("UPDATE orders SET status = 'failed' WHERE razorpay_order_id = ? AND status = 'pending'").run(razorpayOrderId);
+  transaction(() => {
+    const order = getOrder({ razorpayOrderId });
+    if (!order || order.status !== "pending") return;
+    db.prepare("UPDATE orders SET status = 'failed' WHERE id = ?").run(order.id);
+    db.prepare("UPDATE payments SET status = 'failed' WHERE order_id = ? AND status = 'pending'").run(order.id);
+    releaseStock(order);
+  });
 }
 
 // ---------- Seed ----------
@@ -309,8 +529,8 @@ const productCount = (db.prepare("SELECT COUNT(*) AS n FROM products").get() as 
 if (productCount === 0) {
   // Matches the slugs in src/data/products.ts so the coffee pages pick up price and stock.
   // Prices and stock are placeholders — change them in the admin.
-  const seed = db.prepare("INSERT INTO products (slug, name, description, price, stock) VALUES (?, ?, ?, ?, ?)");
-  seed.run("honest-truth", "Honest Truth", "100% Arabica. Smooth, aromatic, refined.", 49900, 25);
-  seed.run("dark-truth", "Dark Truth", "100% Robusta. Bold, intense, powerful.", 44900, 25);
-  seed.run("bitter-truth", "Bitter Truth", "70% Arabica / 30% Robusta. Balanced, bold, complex.", 47900, 25);
+  const seed = db.prepare("INSERT INTO products (slug, sku, name, description, price, stock) VALUES (?, ?, ?, ?, ?, ?)");
+  seed.run("honest-truth", "honest-truth", "Honest Truth", "100% Arabica. Smooth, aromatic, refined.", 49900, 25);
+  seed.run("dark-truth", "dark-truth", "Dark Truth", "100% Robusta. Bold, intense, powerful.", 44900, 25);
+  seed.run("bitter-truth", "bitter-truth", "Bitter Truth", "70% Arabica / 30% Robusta. Balanced, bold, complex.", 47900, 25);
 }

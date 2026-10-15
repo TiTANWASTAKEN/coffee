@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Lock } from "lucide-react";
-import type { CreateOrderRequest, CreateOrderResponse, CustomerDetails, SavedAddress } from "@shared/store";
+import type { CheckoutConfig, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
 import { site } from "@/config/site";
 import { getProduct } from "@/data/products";
 import { AddressLines } from "@/components/account/AddressForm";
@@ -46,7 +46,8 @@ export default function Checkout() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  const [testPayments, setTestPayments] = useState(false);
+  const [checkout, setCheckout] = useState<CheckoutConfig | null>(null);
+  const [method, setMethod] = useState<PaymentMethod>("razorpay");
   const { loading: accountLoading, customer } = useAccount();
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   const [saveAddress, setSaveAddress] = useState(true);
@@ -56,10 +57,19 @@ export default function Checkout() {
   }, [details]);
 
   useEffect(() => {
-    api<{ testPayments: boolean }>("/checkout/config")
-      .then((c) => setTestPayments(c.testPayments))
+    api<CheckoutConfig>("/checkout/config")
+      .then((c) => {
+        setCheckout(c);
+        setMethod((current) => (c.methods.includes(current) ? current : c.methods[0] ?? "razorpay"));
+      })
       .catch(() => undefined);
   }, []);
+
+  const cartKey = cart.lines.map((line) => `${line.product.id}:${line.quantity}`).join(",");
+  useEffect(() => {
+    if (!cartKey) return;
+    sessionStorage.setItem("ht-idem", crypto.randomUUID());
+  }, [cartKey]);
 
   useEffect(() => {
     if (!customer) {
@@ -128,6 +138,8 @@ export default function Checkout() {
       items: cart.lines.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
       customer: details,
       saveAddress: Boolean(customer) && saveAddress && !addresses.some(matchesDetails),
+      paymentMethod: method,
+      idempotencyKey: sessionStorage.getItem("ht-idem") ?? crypto.randomUUID(),
     };
     const simulated = ((e.nativeEvent as SubmitEvent).submitter as HTMLElement | null)?.dataset.simulate;
     if (simulated === "success" || simulated === "failure") return simulate(request, simulated);
@@ -136,7 +148,13 @@ export default function Checkout() {
     track("begin_checkout", { value: cart.subtotal / 100, items: cart.count });
 
     try {
-      const [order] = await Promise.all([api<CreateOrderResponse>("/checkout/order", { method: "POST", body: request }), loadRazorpay()]);
+      const prepare = method === "razorpay" ? loadRazorpay() : Promise.resolve();
+      const [order] = await Promise.all([api<CreateOrderResponse>("/checkout/order", { method: "POST", body: request }), prepare]);
+
+      if (order.paymentMethod !== "razorpay" || !order.razorpayOrderId || !order.keyId) {
+        onPaid(order.orderId, order.amount);
+        return;
+      }
 
       setPhase("paying");
       openRazorpay(
@@ -305,14 +323,34 @@ export default function Checkout() {
                   </li>
                 ))}
               </ul>
+              <fieldset className="mt-6 border-t border-line pt-5">
+                <legend className="eyebrow text-muted">Payment</legend>
+                <div className="mt-3 flex flex-col gap-2">
+                  {(checkout?.methods ?? []).map((option) => (
+                    <label key={option} className="flex min-h-11 items-center gap-3 text-body-sm">
+                      <input type="radio" name="payment" value={option} checked={method === option} onChange={() => setMethod(option)} className="size-4 accent-ivory" />
+                      {option === "razorpay" ? "Pay online" : option === "cod" ? "Cash on delivery" : "UPI — we verify it before shipping"}
+                    </label>
+                  ))}
+                  {checkout && checkout.methods.length === 0 && <p className="text-body-sm text-muted">Payments are not set up yet.</p>}
+                </div>
+              </fieldset>
+
               <dl className="mt-5 flex flex-col gap-2 text-body-sm">
                 <div className="flex justify-between text-muted">
                   <dt>Subtotal</dt>
                   <dd className="tabular-nums">{formatPrice(cart.subtotal)}</dd>
                 </div>
+                <div className="flex justify-between text-muted">
+                  <dt>Shipping</dt>
+                  <dd className="tabular-nums">
+                    {formatPrice(checkout?.shippingPaise ?? 0)}
+                    {checkout && !checkout.shippingConfigured ? " (not configured)" : ""}
+                  </dd>
+                </div>
                 <div className="mt-2 flex items-baseline justify-between border-t border-line pt-4">
                   <dt className="eyebrow text-muted">Total</dt>
-                  <dd className="font-display text-display-xs tabular-nums">{formatPrice(cart.subtotal)}</dd>
+                  <dd className="font-display text-display-xs tabular-nums">{formatPrice(cart.subtotal + (checkout?.shippingPaise ?? 0))}</dd>
                 </div>
               </dl>
 
@@ -322,15 +360,15 @@ export default function Checkout() {
                 </p>
               )}
 
-              <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy || !cart.ready} cursor="Pay">
-                {phase === "creating" ? "Starting payment…" : phase === "paying" ? "Complete payment in the window" : `Pay ${formatPrice(cart.subtotal)}`}
+              <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy || !cart.ready || checkout?.methods.length === 0} cursor="Pay">
+                {phase === "creating" ? "Placing order…" : phase === "paying" ? "Complete payment in the window" : method === "razorpay" ? `Pay ${formatPrice(cart.subtotal + (checkout?.shippingPaise ?? 0))}` : "Place order"}
               </Button>
               <p className="mt-4 flex items-center justify-center gap-2 text-body-sm text-faint">
                 <Lock aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
-                Secured by Razorpay
+                {method === "razorpay" ? "Secured by Razorpay" : method === "upi" ? "We check the payment before shipping" : "Pay when the order arrives"}
               </p>
 
-              {testPayments && (
+              {checkout?.testPayments && method === "razorpay" && (
                 <div className="mt-6 border border-dashed border-line-strong p-4">
                   <p className="eyebrow text-muted">Test mode</p>
                   <p className="mt-2 text-body-sm text-faint">Skips Razorpay and settles the order straight away. Turn off with TEST_PAYMENTS in .env.</p>

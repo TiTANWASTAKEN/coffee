@@ -5,7 +5,7 @@
  * `src/data/products.ts` — this file only holds the main store link.
  */
 
-import { storeEnabled } from "./features";
+import { storeEnabled, waitlistEnabled } from "./features";
 
 export const site = {
   /** Company name — page titles, legal copy, payment screens. */
@@ -45,16 +45,18 @@ export interface NavItem {
   to: string;
 }
 
-export const primaryNav: NavItem[] = [
-  ...(storeEnabled
-    ? [
-        { label: "Shop", to: "/shop" },
-        { label: "Our Coffee", to: "/coffee" },
-      ]
-    : [{ label: "Shop", to: "/coffee" }]),
-  { label: "Story", to: "/story" },
-  { label: "Journal", to: "/journal" },
-];
+export const primaryNav: NavItem[] = waitlistEnabled
+  ? []
+  : [
+      ...(storeEnabled
+        ? [
+            { label: "Shop", to: "/shop" },
+            { label: "Our Coffee", to: "/coffee" },
+          ]
+        : [{ label: "Shop", to: "/coffee" }]),
+      { label: "Story", to: "/story" },
+      { label: "Journal", to: "/journal" },
+    ];
 
 export const legalNav: NavItem[] = [
   { label: "Privacy", to: "/legal/privacy" },

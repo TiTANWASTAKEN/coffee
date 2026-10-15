@@ -5,9 +5,13 @@ import { Router } from "express";
 import multer from "multer";
 import { FULFILLMENT_STATES, type AdminStats, type Fulfillment, type PaymentStatus, type StoreProduct } from "../../shared/store";
 import { checkCredentials, endSession, loginRateLimit, requireAdmin, resetLoginAttempts, sessionEmail, startSession } from "../auth";
+import { canChangeFulfillment, canRefund } from "../commerce";
 import { config } from "../config";
-import { db, getOrder, getProductById, listOrders, listProducts } from "../db";
+import { db, getOrder, getProductById, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock } from "../db";
 import { badRequest, HttpError, idParam, int, notFound, str } from "../http";
+import { notifyOrderOnce, resendOrderEmail } from "../notify";
+import { WaitlistStorageError } from "../supabaseWaitlist";
+import { loadWaitlist } from "../waitlistStore";
 
 export const adminRouter = Router();
 
@@ -35,6 +39,15 @@ adminRouter.get("/me", (req, res) => {
 
 adminRouter.use(requireAdmin);
 
+adminRouter.get("/waitlist", async (_req, res) => {
+  try {
+    res.json(await loadWaitlist());
+  } catch (err) {
+    if (err instanceof WaitlistStorageError) throw new HttpError(503, err.message);
+    throw err;
+  }
+});
+
 // ---------- Dashboard ----------
 
 const LOW_STOCK = 5;
@@ -43,9 +56,16 @@ adminRouter.get("/stats", (_req, res) => {
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
   const stats: AdminStats = {
     revenue: count("SELECT COALESCE(SUM(amount), 0) AS n FROM orders WHERE status = 'paid' AND fulfillment != 'cancelled'"),
+    refunded: count("SELECT COALESCE(SUM(amount), 0) AS n FROM orders WHERE status = 'refunded'"),
+    pendingValue: count("SELECT COALESCE(SUM(amount), 0) AS n FROM orders WHERE status = 'pending' AND payment_method != 'cod'"),
+    codOutstanding: count("SELECT COALESCE(SUM(amount), 0) AS n FROM orders WHERE status = 'pending' AND payment_method = 'cod'"),
     paidOrders: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'"),
     pendingOrders: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending'"),
-    unfulfilledOrders: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND fulfillment = 'unfulfilled'"),
+    awaitingVerification: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending' AND payment_method = 'upi'"),
+    unfulfilledOrders: count("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid' AND fulfillment IN ('unfulfilled', 'packed')"),
+    shippedOrders: count("SELECT COUNT(*) AS n FROM orders WHERE fulfillment = 'shipped'"),
+    deliveredOrders: count("SELECT COUNT(*) AS n FROM orders WHERE fulfillment = 'delivered'"),
+    cancelledOrders: count("SELECT COUNT(*) AS n FROM orders WHERE fulfillment = 'cancelled' OR status = 'refunded'"),
     products: count("SELECT COUNT(*) AS n FROM products"),
     lowStock: db
       .prepare("SELECT id, name, stock FROM products WHERE active = 1 AND stock <= ? ORDER BY stock, name")
@@ -57,7 +77,7 @@ adminRouter.get("/stats", (_req, res) => {
 
 // ---------- Orders ----------
 
-const PAYMENT_STATES: PaymentStatus[] = ["pending", "paid", "failed"];
+const PAYMENT_STATES: PaymentStatus[] = ["pending", "paid", "failed", "refunded"];
 
 adminRouter.get("/orders", (req, res) => {
   const status = req.query.status as PaymentStatus | undefined;
@@ -73,11 +93,84 @@ adminRouter.get("/orders/:id", (req, res) => {
 
 adminRouter.patch("/orders/:id", (req, res) => {
   const id = idParam(req.params.id);
-  const fulfillment = req.body?.fulfillment as Fulfillment;
-  if (!FULFILLMENT_STATES.includes(fulfillment)) throw badRequest("Unknown fulfilment status.");
-  const { changes } = db.prepare("UPDATE orders SET fulfillment = ? WHERE id = ?").run(fulfillment, id);
-  if (!changes) throw notFound("Order not found.");
+  const order = getOrder({ id });
+  if (!order) throw notFound("Order not found.");
+
+  if (req.body?.fulfillment !== undefined) {
+    const fulfillment = req.body.fulfillment as Fulfillment;
+    if (!FULFILLMENT_STATES.includes(fulfillment)) throw badRequest("Unknown fulfilment status.");
+    const problem = canChangeFulfillment(order.fulfillment, fulfillment, { status: order.status, method: order.paymentMethod });
+    if (problem) throw badRequest(problem);
+    if (fulfillment === "cancelled" && order.fulfillment !== "cancelled") releaseStock(order);
+    const dispatchedAt = fulfillment === "shipped" ? "datetime('now')" : null;
+    const deliveredAt = fulfillment === "delivered" ? "datetime('now')" : null;
+    db.prepare("UPDATE orders SET fulfillment = ? WHERE id = ?").run(fulfillment, id);
+    if (dispatchedAt || deliveredAt) {
+      db.prepare(
+        `INSERT INTO shipments (order_id, dispatched_at, delivered_at) VALUES (?, ${dispatchedAt ?? "NULL"}, ${deliveredAt ?? "NULL"})
+         ON CONFLICT(order_id) DO UPDATE SET
+           dispatched_at = COALESCE(shipments.dispatched_at, excluded.dispatched_at),
+           delivered_at = COALESCE(excluded.delivered_at, shipments.delivered_at),
+           updated_at = datetime('now')`,
+      ).run(id);
+    }
+    recordAdminEvent(id, "fulfillment", `${order.fulfillment} → ${fulfillment}`);
+  }
+
+  if (req.body?.shipment !== undefined) {
+    const body = req.body.shipment as Record<string, unknown>;
+    const courier = str(body.courier, "Courier", { max: 80, optional: true });
+    const trackingRef = str(body.trackingRef, "Tracking reference", { max: 80, optional: true });
+    const trackingUrl = str(body.trackingUrl, "Tracking URL", { max: 300, optional: true });
+    if (trackingUrl && !/^https:\/\//.test(trackingUrl)) throw badRequest("Tracking URL must start with https://");
+    db.prepare(
+      `INSERT INTO shipments (order_id, courier, tracking_ref, tracking_url) VALUES (?, ?, ?, ?)
+       ON CONFLICT(order_id) DO UPDATE SET courier = excluded.courier, tracking_ref = excluded.tracking_ref, tracking_url = excluded.tracking_url, updated_at = datetime('now')`,
+    ).run(id, courier, trackingRef, trackingUrl);
+    recordAdminEvent(id, "shipment", trackingRef || courier);
+  }
+
   res.json(getOrder({ id }));
+});
+
+adminRouter.post("/orders/:id/verify-payment", async (req, res) => {
+  const id = idParam(req.params.id);
+  const order = getOrder({ id });
+  if (!order) throw notFound("Order not found.");
+  if (order.paymentMethod === "razorpay") throw badRequest("Razorpay payments are verified from the payment signature, not by hand.");
+  if (order.status === "paid") {
+    res.json(order);
+    return;
+  }
+  if (order.status !== "pending") throw badRequest("This payment can no longer be verified.");
+  const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 200) : "";
+  const paid = markOrderPaidById(id, order.paymentMethod === "upi" ? order.upiReference || note || "verified-by-admin" : "cod-collected");
+  recordAdminEvent(id, "verify_payment", note || order.paymentMethod);
+  if (paid) await notifyOrderOnce(paid.id);
+  res.json(getOrder({ id }));
+});
+
+adminRouter.post("/orders/:id/refund", (req, res) => {
+  const id = idParam(req.params.id);
+  const order = getOrder({ id });
+  if (!order) throw notFound("Order not found.");
+  const problem = canRefund(order.status, order.fulfillment);
+  if (problem) throw badRequest(problem);
+  db.prepare("UPDATE orders SET status = 'refunded', fulfillment = 'cancelled' WHERE id = ?").run(id);
+  db.prepare("UPDATE payments SET status = 'refunded', refund_status = 'refunded' WHERE order_id = ?").run(id);
+  releaseStock(order);
+  recordAdminEvent(id, "refund", "Marked refunded. Complete the refund in the payment provider.");
+  res.json(getOrder({ id }));
+});
+
+adminRouter.post("/orders/:id/resend-email", async (req, res) => {
+  const id = idParam(req.params.id);
+  const order = getOrder({ id });
+  if (!order) throw notFound("Order not found.");
+  const sent = await resendOrderEmail(id);
+  if (!sent) throw new HttpError(502, "The email provider did not accept the message.");
+  recordAdminEvent(id, "resend_email", order.customer.email);
+  res.json({ ok: true });
 });
 
 // ---------- Products ----------
@@ -103,9 +196,11 @@ function uniqueSlug(base: string, exceptId?: number): string {
 function readProduct(body: Record<string, unknown>, existing?: StoreProduct) {
   const name = str(body.name ?? existing?.name, "Name", { max: 120 });
   const requestedSlug = typeof body.slug === "string" && body.slug.trim() ? slugify(body.slug) : existing?.slug ?? slugify(name);
+  const skuSource = typeof body.sku === "string" ? body.sku : existing?.sku;
   return {
     name,
     slug: uniqueSlug(requestedSlug, existing?.id),
+    sku: str(skuSource || requestedSlug, "SKU", { max: 80 }),
     description: str(body.description ?? existing?.description, "Description", { max: 5000, optional: true }),
     price: int(body.price ?? existing?.price, "Price (in paise)", { min: 100, max: 10_000_000 }),
     stock: int(body.stock ?? existing?.stock, "Stock", { min: 0, max: 1_000_000 }),
@@ -126,8 +221,8 @@ adminRouter.get("/products/:id", (req, res) => {
 adminRouter.post("/products", (req, res) => {
   const p = readProduct(req.body ?? {});
   const { lastInsertRowid } = db
-    .prepare("INSERT INTO products (slug, name, description, price, stock, active) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(p.slug, p.name, p.description, p.price, p.stock, p.active ? 1 : 0);
+    .prepare("INSERT INTO products (slug, sku, name, description, price, stock, active) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(p.slug, p.sku, p.name, p.description, p.price, p.stock, p.active ? 1 : 0);
   res.status(201).json(getProductById(Number(lastInsertRowid)));
 });
 
@@ -147,8 +242,8 @@ adminRouter.patch("/products/:id", async (req, res) => {
   }
 
   db.prepare(
-    "UPDATE products SET slug = ?, name = ?, description = ?, price = ?, stock = ?, active = ?, images = ?, updated_at = datetime('now') WHERE id = ?",
-  ).run(p.slug, p.name, p.description, p.price, p.stock, p.active ? 1 : 0, JSON.stringify(images), id);
+    "UPDATE products SET slug = ?, sku = ?, name = ?, description = ?, price = ?, stock = ?, active = ?, images = ?, updated_at = datetime('now') WHERE id = ?",
+  ).run(p.slug, p.sku, p.name, p.description, p.price, p.stock, p.active ? 1 : 0, JSON.stringify(images), id);
 
   await removeFiles(existing.images.filter((url) => !images.includes(url)));
   res.json(getProductById(id));
