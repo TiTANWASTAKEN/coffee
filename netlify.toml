@@ -1,12 +1,24 @@
-# Free hosting for the waitlist.
-# /api/* runs in a Netlify Function and stores emails in Supabase.
-# Checkout, payments and the product database still need the Node server.
+# The site and /api/* run on Netlify.
+# Orders live in Supabase (run supabase/store.sql).
+# Secrets stay in the Netlify UI, not in this file:
+#   ADMIN_EMAIL, ADMIN_PASSWORD, JWT_SECRET,
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+#   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
+#   RESEND_API_KEY, EMAIL_FROM, SUPPORT_EMAIL
+# Leave TEST_PAYMENTS unset.
 [build]
   command = "npm run build"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "22"
+  SITE_VERSION = "v1"
+
+[context.production.environment]
+  SITE_VERSION = "v1"
+  PUBLIC_URL = "https://bittertruthcoffee.in"
+  SHIPPING_PAISE = "9000"
+  NCR_ONLY = "true"
 
 [functions]
   node_bundler = "esbuild"

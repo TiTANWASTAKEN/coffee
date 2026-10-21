@@ -22,7 +22,7 @@ export function ProductGrid() {
         <Stagger className="mt-14 grid gap-5 md:mt-20 md:grid-cols-3 lg:gap-6" gap={0.12}>
           {products.map((product) => (
             <StaggerItem key={product.id}>
-              <ProductCard product={product} />
+              <ProductCard product={product} illustrated={product.slug !== "dark-truth"} />
             </StaggerItem>
           ))}
         </Stagger>

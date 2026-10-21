@@ -21,22 +21,22 @@ export const principles = [
 
 export const chapters = [
   {
-    id: "arabica",
-    product: "honest-truth",
-    numeral: "I",
-    eyebrow: "Arabica",
-    title: ["The quieter", "bean."],
-    body: "Arabica is the fragrant one — lighter in the cup, higher in aroma, easier to drink black. Honest Truth is this bean on its own.",
-    image: assets.story.arabica,
-  },
-  {
     id: "robusta",
     product: "dark-truth",
-    numeral: "II",
+    numeral: "I",
     eyebrow: "Robusta",
     title: ["The heavier", "bean."],
     body: "Robusta brings body, bitterness and caffeine. It is often blended away. Dark Truth is 100% of it, so you can taste what it actually is.",
     image: assets.story.robusta,
+  },
+  {
+    id: "arabica",
+    product: "honest-truth",
+    numeral: "II",
+    eyebrow: "Arabica",
+    title: ["The quieter", "bean."],
+    body: "Arabica is the fragrant one — lighter in the cup, higher in aroma, easier to drink black. Honest Truth is this bean on its own.",
+    image: assets.story.arabica,
   },
   {
     id: "blend",

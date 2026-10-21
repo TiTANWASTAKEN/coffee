@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Route, Routes, useLocation } from "react-router";
 import { AnimatePresence } from "framer-motion";
-import { storeEnabled, waitlistEnabled } from "@/config/features";
+import { accountsEnabled, storeEnabled, waitlistEnabled } from "@/config/features";
 import { Layout } from "@/components/layout/Layout";
 import { AccountProvider } from "@/store/account";
 import { CatalogProvider } from "@/store/catalog";
@@ -62,11 +62,15 @@ export default function App() {
                     <Route path="/checkout" element={<Checkout />} />
                     <Route path="/order/:id" element={<OrderConfirmation />} />
                     <Route path="/track-order" element={<TrackOrder />} />
-                    <Route path="/account" element={<Account />} />
-                    <Route path="/account/login" element={<Login />} />
-                    <Route path="/account/register" element={<Register />} />
-                    <Route path="/account/forgot" element={<ForgotPassword />} />
-                    <Route path="/account/reset" element={<ResetPassword />} />
+                    {accountsEnabled && (
+                      <>
+                        <Route path="/account" element={<Account />} />
+                        <Route path="/account/login" element={<Login />} />
+                        <Route path="/account/register" element={<Register />} />
+                        <Route path="/account/forgot" element={<ForgotPassword />} />
+                        <Route path="/account/reset" element={<ResetPassword />} />
+                      </>
+                    )}
                   </>
                 )}
                 <Route path="/story" element={<Story />} />

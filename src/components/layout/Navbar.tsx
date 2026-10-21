@@ -5,7 +5,7 @@ import { Search, ShoppingBag, UserRound } from "lucide-react";
 import { primaryNav, site } from "@/config/site";
 import { Wordmark } from "@/components/ui/Wordmark";
 import { ease } from "@/lib/motion";
-import { storeEnabled, waitlistEnabled } from "@/config/features";
+import { accountsEnabled, storeEnabled, waitlistEnabled } from "@/config/features";
 import { useAccount } from "@/store/account";
 import { useCart } from "@/store/cart";
 
@@ -83,14 +83,16 @@ export function Navbar({ menuOpen, onMenuToggle, onSearchOpen, onCartOpen, inert
             )}
             {storeEnabled && (
               <>
-                <Link
-                  to={customer ? "/account" : "/account/login"}
-                  aria-label={customer ? `Your account (${customer.name})` : "Sign in"}
-                  className="relative hidden size-11 place-items-center text-ivory/80 transition-colors hover:text-ivory sm:grid"
-                >
-                  <UserRound aria-hidden="true" strokeWidth={1.4} className="size-[18px]" />
-                  {customer && <span aria-hidden="true" className="absolute right-2.5 top-2.5 size-1.5 rounded-full bg-accent" />}
-                </Link>
+                {accountsEnabled && (
+                  <Link
+                    to={customer ? "/account" : "/account/login"}
+                    aria-label={customer ? `Your account (${customer.name})` : "Sign in"}
+                    className="relative hidden size-11 place-items-center text-ivory/80 transition-colors hover:text-ivory sm:grid"
+                  >
+                    <UserRound aria-hidden="true" strokeWidth={1.4} className="size-[18px]" />
+                    {customer && <span aria-hidden="true" className="absolute right-2.5 top-2.5 size-1.5 rounded-full bg-accent" />}
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={onCartOpen}

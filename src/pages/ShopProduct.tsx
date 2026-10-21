@@ -74,7 +74,7 @@ export default function ShopProduct() {
           <h1 className="mt-8 text-display-md font-light uppercase">{product.name}</h1>
           <p className="mt-6 font-display text-display-xs tabular-nums">{formatPrice(product.price)}</p>
           <p className="label mt-2 font-medium text-muted">
-            {product.stock === 0 ? "Sold out" : product.stock <= 5 ? `Only ${product.stock} left` : "In stock"}
+            {product.stock === 0 ? "Coming soon" : product.stock <= 5 ? `Only ${product.stock} left` : "In stock"}
           </p>
           {product.description && <p className="mt-8 whitespace-pre-line text-muted">{product.description}</p>}
 

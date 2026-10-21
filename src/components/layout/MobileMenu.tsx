@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { storeEnabled } from "@/config/features";
+import { accountsEnabled, storeEnabled } from "@/config/features";
 import { primaryNav, site } from "@/config/site";
 import { useAccount } from "@/store/account";
 import { products } from "@/data/products";
@@ -79,7 +79,7 @@ export function MobileMenu({ open }: { open: boolean }) {
               </ul>
             </div>
             <div>
-              {storeEnabled && (
+              {storeEnabled && accountsEnabled && (
                 <>
                   <p className="eyebrow mb-4 text-faint">Account</p>
                   <Link to={customer ? "/account" : "/account/login"} className="mb-8 block text-muted transition-colors hover:text-ivory">

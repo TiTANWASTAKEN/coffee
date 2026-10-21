@@ -32,10 +32,8 @@ app.use("/uploads", express.static(config.uploadsDir, { immutable: true, maxAge:
 
 app.use("/api/admin", adminRouter);
 app.use("/api/waitlist", waitlistRouter);
-if (config.siteVersion === "v2") {
-  app.use("/api/account", accountRouter);
-  app.use("/api", storeRouter);
-}
+if (config.siteVersion === "v2") app.use("/api/account", accountRouter);
+if (config.siteVersion !== "v0") app.use("/api", storeRouter);
 app.use("/api", () => {
   throw notFound();
 });
@@ -60,8 +58,8 @@ app.listen(config.port, (err) => {
     config.siteVersion === "v0"
       ? "SITE_VERSION=v0 — public site is the waitlist. Signups are stored for /admin."
       : config.siteVersion === "v2"
-        ? "SITE_VERSION=v2 — direct store (shop, cart, checkout, accounts) is on."
-        : "SITE_VERSION=v1 — Amazon-only site; store and account APIs are off.",
+        ? "SITE_VERSION=v2 — direct store is on, including the customer account API."
+        : "SITE_VERSION=v1 — direct store is on. Customer accounts are off. Admin stays on.",
   );
   if (!emailConfigured) console.warn("RESEND_API_KEY / EMAIL_FROM not set — emails (password resets) are printed here instead of sent.");
   if (config.testPayments) console.warn("TEST_PAYMENTS is on — checkout shows simulate-payment buttons. Turn it off before going live.");
@@ -69,6 +67,7 @@ app.listen(config.port, (err) => {
     console.warn("No payment method is configured — checkout will refuse orders until Razorpay, COD_ENABLED, or UPI_VPA is set.");
   }
   if (!config.shipping.configured) console.warn("SHIPPING_PAISE is unset — checkout shows shipping as not configured and charges ₹0.");
+  console.log(config.ncrOnly ? "NCR_ONLY=true — checkout accepts NCR PIN codes." : "NCR_ONLY=false — checkout accepts Indian PIN codes.");
   if (config.supportEmail.endsWith("@yourdomain.com")) console.warn("SUPPORT_EMAIL is still the placeholder. Set it before launch.");
   if (config.supabase.url && config.supabase.serviceRoleKey) console.log("Waitlist storage: Supabase.");
   else if (config.siteVersion === "v0") console.warn("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set — waitlist emails are stored in the local database only.");

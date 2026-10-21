@@ -16,6 +16,7 @@ interface RazorpayOrder {
 /** https://razorpay.com/docs/api/orders/create/ */
 export async function createRazorpayOrder(amount: number, receipt: string): Promise<RazorpayOrder> {
   if (!razorpayConfigured) throw new HttpError(503, "Payments are not set up yet. Add your Razorpay keys to .env.");
+  if (!Number.isInteger(amount) || amount < 100) throw new HttpError(400, "Amount must be at least ₹1.");
 
   const res = await fetch("https://api.razorpay.com/v1/orders", {
     method: "POST",
@@ -28,7 +29,8 @@ export async function createRazorpayOrder(amount: number, receipt: string): Prom
 
   if (!res.ok) {
     console.error("Razorpay order creation failed:", res.status, await res.text());
-    throw new HttpError(502, "Could not start the payment. Please try again.");
+    if (res.status === 401) throw new HttpError(401, "Payment service rejected the API keys.");
+    throw new HttpError(500, "Could not start the payment. Please try again.");
   }
   return (await res.json()) as RazorpayOrder;
 }

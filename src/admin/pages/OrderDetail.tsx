@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
-import { nextFulfillments, type AdminOrder, type Fulfillment } from "@shared/store";
+import { fulfillmentLabel, nextFulfillments, type AdminOrder, type Fulfillment } from "@shared/store";
 import { errorMessage } from "@/lib/api";
 import { formatDate, formatPrice } from "@/lib/format";
 import { useAdminAuth, useAdminQuery } from "../auth";
@@ -17,12 +17,15 @@ export default function OrderDetail() {
   const [courier, setCourier] = useState("");
   const [trackingRef, setTrackingRef] = useState("");
   const [trackingUrl, setTrackingUrl] = useState("");
+  const [location, setLocation] = useState("");
+  const [note, setNote] = useState("");
 
   useEffect(() => {
     if (!order) return;
     setCourier(order.shipment?.courier ?? "");
     setTrackingRef(order.shipment?.trackingRef ?? "");
     setTrackingUrl(order.shipment?.trackingUrl ?? "");
+    setLocation(order.shipment?.location ?? "");
   }, [order]);
 
   if (loading && !order) return <Loading />;
@@ -53,8 +56,9 @@ export default function OrderDetail() {
     setSaving(true);
     setMessage(null);
     try {
-      setData(await request<AdminOrder>(`/orders/${order!.id}`, { method: "PATCH", body: { shipment: { courier, trackingRef, trackingUrl } } }));
-      setMessage({ tone: "success", text: "Shipment saved." });
+      setData(await request<AdminOrder>(`/orders/${order!.id}`, { method: "PATCH", body: { shipment: { courier, trackingRef, trackingUrl, location, note } } }));
+      setNote("");
+      setMessage({ tone: "success", text: "Tracking saved." });
     } catch (err) {
       setMessage({ tone: "error", text: errorMessage(err) });
     } finally {
@@ -197,16 +201,22 @@ export default function OrderDetail() {
               <p className="text-body-sm text-muted">Verify the payment before packing or shipping.</p>
             ) : (
               <div className="flex flex-col gap-3">
-                <select value={selected} onChange={(e) => setFulfillment(e.target.value as Fulfillment)} className={`${inputClass} capitalize`}>
+                <select value={selected} onChange={(e) => setFulfillment(e.target.value as Fulfillment)} className={inputClass}>
                   {[order.fulfillment, ...nextFulfillments(order.fulfillment)].map((s) => (
                     <option key={s} value={s}>
-                      {s}
+                      {fulfillmentLabel[s]}
                     </option>
                   ))}
                 </select>
                 <AdminButton onClick={() => void save()} disabled={saving || selected === order.fulfillment}>
                   {saving ? "Saving…" : "Update status"}
                 </AdminButton>
+                <FormField label="Where it has reached">
+                  <input value={location} onChange={(e) => setLocation(e.target.value)} className={inputClass} placeholder="Bengaluru hub" />
+                </FormField>
+                <FormField label="Note for the customer">
+                  <input value={note} onChange={(e) => setNote(e.target.value)} className={inputClass} placeholder="Left the roastery this morning" />
+                </FormField>
                 <FormField label="Courier">
                   <input value={courier} onChange={(e) => setCourier(e.target.value)} className={inputClass} />
                 </FormField>
@@ -217,8 +227,19 @@ export default function OrderDetail() {
                   <input value={trackingUrl} onChange={(e) => setTrackingUrl(e.target.value)} className={inputClass} placeholder="https://" />
                 </FormField>
                 <AdminButton tone="secondary" onClick={() => void saveShipment()} disabled={saving}>
-                  Save shipment
+                  Save tracking
                 </AdminButton>
+                {order.updates.some((update) => update.note) && (
+                  <ul className="mt-2 border-t border-line pt-3 text-body-sm text-muted">
+                    {order.updates
+                      .filter((update) => update.note)
+                      .map((update, i) => (
+                        <li key={`${update.at}-${i}`} className="py-1.5">
+                          <span className="text-faint">{update.label}</span> — {update.note}
+                        </li>
+                      ))}
+                  </ul>
+                )}
               </div>
             )}
           </Card>

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import type { AdminOrder, CustomerDetails, Fulfillment, OrderItem, OrderSummary, PaymentMethod, PaymentStatus, ShipmentInfo, StoreProduct } from "../shared/store";
+import type { AdminOrder, CustomerDetails, Fulfillment, OrderItem, OrderSummary, PaymentMethod, PaymentStatus, ShipmentInfo, StoreProduct, TrackingUpdate } from "../shared/store";
 import { formatOrderCode, RELEASE_STOCK_SQL, RESERVE_STOCK_SQL } from "./commerce";
 import { config } from "./config";
 
@@ -139,6 +139,15 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS payments_order ON payments(order_id);
 
+  CREATE TABLE IF NOT EXISTS order_updates (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    label      TEXT    NOT NULL,
+    note       TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS order_updates_order ON order_updates(order_id);
+
   CREATE TABLE IF NOT EXISTS shipments (
     order_id      INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
     courier       TEXT    NOT NULL DEFAULT '',
@@ -157,6 +166,8 @@ db.exec(`
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+addColumn("shipments", "location", "TEXT NOT NULL DEFAULT ''");
 
 /** Runs `fn` inside a transaction, rolling back if it throws. */
 export function transaction<T>(fn: () => T): T {
@@ -253,8 +264,16 @@ interface ShipmentRow {
   courier: string;
   tracking_ref: string;
   tracking_url: string;
+  location: string;
   dispatched_at: string | null;
   delivered_at: string | null;
+}
+
+interface UpdateRow {
+  order_id: number;
+  label: string;
+  note: string;
+  created_at: string;
 }
 
 interface OrderItemRow {
@@ -290,6 +309,7 @@ function shipmentsFor(orderIds: number[]): Map<number, ShipmentInfo> {
       courier: row.courier,
       trackingRef: row.tracking_ref,
       trackingUrl: row.tracking_url,
+      location: row.location ?? "",
       dispatchedAt: row.dispatched_at,
       deliveredAt: row.delivered_at,
     });
@@ -297,9 +317,29 @@ function shipmentsFor(orderIds: number[]): Map<number, ShipmentInfo> {
   return byOrder;
 }
 
+function updatesFor(orderIds: number[]): Map<number, TrackingUpdate[]> {
+  const byOrder = new Map<number, TrackingUpdate[]>();
+  if (orderIds.length === 0) return byOrder;
+  const placeholders = orderIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(`SELECT order_id, label, note, created_at FROM order_updates WHERE order_id IN (${placeholders}) ORDER BY id`)
+    .all(...orderIds) as unknown as UpdateRow[];
+  for (const row of rows) {
+    const list = byOrder.get(row.order_id) ?? [];
+    list.push({ label: row.label, note: row.note, at: row.created_at });
+    byOrder.set(row.order_id, list);
+  }
+  return byOrder;
+}
+
+export function addOrderUpdate(orderId: number, label: string, note: string): void {
+  db.prepare("INSERT INTO order_updates (order_id, label, note) VALUES (?, ?, ?)").run(orderId, label, note.trim());
+}
+
 function toOrders(rows: OrderRow[]): AdminOrder[] {
   const items = itemsFor(rows.map((r) => r.id));
   const shipments = shipmentsFor(rows.map((r) => r.id));
+  const updates = updatesFor(rows.map((r) => r.id));
   return rows.map((row) => ({
     id: row.id,
     publicId: row.public_id,
@@ -329,6 +369,7 @@ function toOrders(rows: OrderRow[]): AdminOrder[] {
     },
     items: items.get(row.id) ?? [],
     shipment: shipments.get(row.id) ?? null,
+    updates: updates.get(row.id) ?? [],
     createdAt: row.created_at,
     paidAt: row.paid_at,
   }));
@@ -367,7 +408,8 @@ export function toOrderSummary(order: AdminOrder): OrderSummary {
     items: order.items,
     createdAt: order.createdAt,
     paidAt: order.paidAt,
-    shipment: order.shipment ? { courier: order.shipment.courier, trackingUrl: order.shipment.trackingUrl } : null,
+    shipment: order.shipment ? { courier: order.shipment.courier, trackingUrl: order.shipment.trackingUrl, location: order.shipment.location } : null,
+    updates: order.updates,
   };
 }
 
@@ -385,6 +427,7 @@ export function toTrackedOrder(order: AdminOrder) {
     status: summary.status,
     fulfillment: summary.fulfillment,
     shipment: summary.shipment,
+    updates: summary.updates,
   };
 }
 
@@ -423,7 +466,7 @@ export function insertOrder(input: NewOrder): number {
       if (result.changes !== 1) {
         const product = getProductById(item.productId);
         const name = product?.name ?? "An item";
-        throw new Error(product && product.stock > 0 ? `Only ${product.stock} of ${name} left in stock.` : `${name} is sold out.`);
+        throw new Error(product && product.stock > 0 ? `Only ${product.stock} of ${name} left in stock.` : `${name} is coming soon.`);
       }
     }
     const { lastInsertRowid } = db
@@ -528,9 +571,9 @@ export function markOrderFailed(razorpayOrderId: string): void {
 const productCount = (db.prepare("SELECT COUNT(*) AS n FROM products").get() as { n: number }).n;
 if (productCount === 0) {
   // Matches the slugs in src/data/products.ts so the coffee pages pick up price and stock.
-  // Prices and stock are placeholders — change them in the admin.
+  // Honest Truth and Bitter Truth start unavailable. Dark Truth is the one in stock.
   const seed = db.prepare("INSERT INTO products (slug, sku, name, description, price, stock) VALUES (?, ?, ?, ?, ?, ?)");
-  seed.run("honest-truth", "honest-truth", "Honest Truth", "100% Arabica. Smooth, aromatic, refined.", 49900, 25);
+  seed.run("honest-truth", "honest-truth", "Honest Truth", "100% Arabica from Coorg. Medium plus roast — chocolate, caramel, mild nut.", 49900, 0);
   seed.run("dark-truth", "dark-truth", "Dark Truth", "100% Robusta. Bold, intense, powerful.", 44900, 25);
-  seed.run("bitter-truth", "bitter-truth", "Bitter Truth", "70% Arabica / 30% Robusta. Balanced, bold, complex.", 47900, 25);
+  seed.run("bitter-truth", "bitter-truth", "Bitter Truth", "70% Arabica / 30% Robusta. Balanced, bold, complex.", 47900, 0);
 }

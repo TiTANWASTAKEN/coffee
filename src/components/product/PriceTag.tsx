@@ -9,7 +9,7 @@ export function PriceTag({ slug, className = "" }: { slug: string; className?: s
   if (!product) return null;
 
   const stock =
-    product.stock === 0 ? "Sold out" : product.stock <= LOW_STOCK ? `Only ${product.stock} left` : "In stock";
+    product.stock === 0 ? "Coming soon" : product.stock <= LOW_STOCK ? `Only ${product.stock} left` : "In stock";
 
   return (
     <p className={`flex items-baseline gap-4 ${className}`}>

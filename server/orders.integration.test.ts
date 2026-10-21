@@ -15,7 +15,10 @@ process.env.RESEND_API_KEY = "re_test_not_real";
 process.env.EMAIL_FROM = "orders@example.com";
 process.env.COD_ENABLED = "true";
 process.env.SHIPPING_PAISE = "0";
+process.env.NCR_ONLY = "true";
 process.env.SITE_VERSION = "v2";
+process.env.ADMIN_EMAIL = "owner@example.com";
+process.env.ADMIN_NOTIFY_EMAIL = "";
 
 const realFetch = globalThis.fetch;
 let emailStatus = 200;
@@ -39,6 +42,7 @@ const { adminRouter } = await import("./routes/admin.ts");
 const { errorHandler } = await import("./http.ts");
 const { config } = await import("./config.ts");
 const { db, getProductBySlug } = await import("./db.ts");
+db.prepare("UPDATE products SET stock = 25, active = 1 WHERE slug IN ('honest-truth', 'bitter-truth', 'dark-truth')").run();
 const { verifyPaymentSignature } = await import("./razorpay.ts");
 const { notifyOrderOnce } = await import("./notify.ts");
 
@@ -59,6 +63,7 @@ const base = `http://127.0.0.1:${address.port}`;
 
 after(() => {
   server.close();
+  db.close();
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -68,9 +73,9 @@ const customer = {
   phone: "9810012345",
   line1: "1 Road",
   line2: "",
-  city: "Bengaluru",
-  state: "Karnataka",
-  postalCode: "560001",
+  city: "New Delhi",
+  state: "Delhi",
+  postalCode: "110001",
 };
 
 function adminCookie(): string {
@@ -130,6 +135,16 @@ describe("checkout", () => {
     assert.equal(item.unit_price, 49900);
   });
 
+  it("refuses a PIN code outside the delivery area without taking stock", async () => {
+    const before = stockOf("dark-truth");
+    const res = await checkout("dark-truth", {
+      customer: { ...customer, city: "Bengaluru", state: "Karnataka", postalCode: "560001" },
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, "We can't deliver to this PIN code yet.");
+    assert.equal(stockOf("dark-truth"), before);
+  });
+
   it("rejects an inactive product and an out-of-stock product", async () => {
     db.prepare("UPDATE products SET active = 0 WHERE slug = 'dark-truth'").run();
     const inactive = await checkout("dark-truth");
@@ -168,7 +183,7 @@ describe("checkout", () => {
     const saved = await request(`/api/orders/${res.body.orderId}/upi-reference`, { reference: "UTR123456" });
     assert.equal(saved.status, 200);
     assert.equal(orderRow(String(res.body.orderId)).status, "pending");
-    const letter = emails.at(-1);
+    const letter = emails.filter((mail) => /not yet verified/.test(mail.subject)).at(-1);
     assert.match(letter?.subject ?? "", /not yet verified/);
     assert.match(letter?.text ?? "", /will not ship/);
   });
@@ -176,7 +191,7 @@ describe("checkout", () => {
   it("releases stock when the payment provider refuses the order", async () => {
     const before = stockOf("honest-truth");
     const res = await checkout("honest-truth", { paymentMethod: "razorpay" });
-    assert.equal(res.status, 502);
+    assert.equal(res.status, 500);
     assert.equal(stockOf("honest-truth"), before);
   });
 });
@@ -239,24 +254,22 @@ describe("payments", () => {
 });
 
 describe("tracking and admin", () => {
-  it("hides an order unless the email or phone matches, and returns the same error either way", async () => {
+  it("looks an order up by its number and the phone on the order, and hides private fields", async () => {
     const created = await checkout("honest-truth", { paymentMethod: "cod" });
     const code = String(created.body.orderCode);
-    const wrong = await request("/api/track", { orderCode: code, contact: "other@example.com" });
-    const missing = await request("/api/track", { orderCode: "BT-9999", contact: "other@example.com" });
-    assert.equal(wrong.status, 404);
+    const missing = await request("/api/track", { orderCode: "BT-9999", phone: "9810012345" });
     assert.equal(missing.status, 404);
-    assert.equal(wrong.body.error, missing.body.error);
 
-    const found = await request("/api/track", { orderCode: code, contact: "ASHA@example.com" });
+    const wrongPhone = await request("/api/track", { orderCode: code, phone: "9000000000" });
+    assert.equal(wrongPhone.status, 404);
+    assert.equal(wrongPhone.body.error, "We couldn't find an order with that number and phone.");
+
+    const found = await request("/api/track", { orderCode: code, phone: "+91 98100 12345" });
     assert.equal(found.status, 200);
     assert.equal(found.body.code, code);
     assert.equal("email" in found.body, false);
     assert.equal("notes" in found.body, false);
     assert.equal("razorpayPaymentId" in found.body, false);
-
-    const other = await request("/api/track", { orderCode: code, contact: "9810012346" });
-    assert.equal(other.status, 404);
   });
 
   it("refuses anonymous admin access, verifies UPI by hand, and blocks illegal fulfilment and refunds", async () => {
@@ -313,10 +326,14 @@ describe("tracking and admin", () => {
     emailStatus = 200;
     const before = emails.length;
     await notifyOrderOnce(row.id);
+    const afterFirst = emails.length;
     await notifyOrderOnce(row.id);
+    assert.equal(emails.length, afterFirst);
     const sent = emails.slice(before);
-    assert.equal(sent.length, 1);
-    assert.match(sent[0].text, /cash on delivery/);
-    assert.match(sent[0].text, /Track your order/);
+    const customer = sent.filter((mail) => !mail.subject.startsWith("New order"));
+    assert.equal(customer.length, 1);
+    assert.ok(sent.some((mail) => mail.subject.startsWith("New order")));
+    assert.match(customer[0].text, /cash on delivery/);
+    assert.match(customer[0].text, /phone number from checkout/);
   });
 });

@@ -87,14 +87,15 @@ export interface VerifyPaymentRequest {
 }
 
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
-export type Fulfillment = "unfulfilled" | "packed" | "shipped" | "delivered" | "cancelled";
+export type Fulfillment = "unfulfilled" | "packed" | "shipped" | "out_for_delivery" | "delivered" | "cancelled";
 
-export const FULFILLMENT_STATES: Fulfillment[] = ["unfulfilled", "packed", "shipped", "delivered", "cancelled"];
+export const FULFILLMENT_STATES: Fulfillment[] = ["unfulfilled", "packed", "shipped", "out_for_delivery", "delivered", "cancelled"];
 
 const NEXT_FULFILLMENT: Record<Fulfillment, Fulfillment[]> = {
-  unfulfilled: ["packed", "shipped", "cancelled"],
-  packed: ["shipped", "cancelled"],
-  shipped: ["delivered"],
+  unfulfilled: ["packed", "shipped", "out_for_delivery", "cancelled"],
+  packed: ["shipped", "out_for_delivery", "cancelled"],
+  shipped: ["out_for_delivery", "delivered"],
+  out_for_delivery: ["delivered"],
   delivered: [],
   cancelled: [],
 };
@@ -104,12 +105,30 @@ export function nextFulfillments(from: Fulfillment): Fulfillment[] {
   return NEXT_FULFILLMENT[from];
 }
 
+export const fulfillmentLabel: Record<Fulfillment, string> = {
+  unfulfilled: "Order placed",
+  packed: "Packed",
+  shipped: "Shipped",
+  out_for_delivery: "On the way",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
 export interface ShipmentInfo {
   courier: string;
   trackingRef: string;
   trackingUrl: string;
+  /** Where the parcel is right now, in plain language. */
+  location: string;
   dispatchedAt: string | null;
   deliveredAt: string | null;
+}
+
+/** A note the admin adds as the order moves. Shown on the public tracking page. */
+export interface TrackingUpdate {
+  label: string;
+  note: string;
+  at: string;
 }
 
 export interface OrderItem {
@@ -138,7 +157,8 @@ export interface OrderSummary {
   items: OrderItem[];
   createdAt: string;
   paidAt: string | null;
-  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl"> | null;
+  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl" | "location"> | null;
+  updates: TrackingUpdate[];
 }
 
 export interface AdminOrder {
@@ -162,11 +182,12 @@ export interface AdminOrder {
   customer: CustomerDetails;
   items: OrderItem[];
   shipment: ShipmentInfo | null;
+  updates: TrackingUpdate[];
   createdAt: string;
   paidAt: string | null;
 }
 
-/** Safe fields returned after the customer proves order code + email or phone. */
+/** Safe fields returned for an order number. No customer login, and no email or phone. */
 export interface TrackedOrder {
   code: string;
   createdAt: string;
@@ -178,7 +199,8 @@ export interface TrackedOrder {
   paymentMethod: PaymentMethod;
   status: PaymentStatus;
   fulfillment: Fulfillment;
-  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl"> | null;
+  shipment: Pick<ShipmentInfo, "courier" | "trackingUrl" | "location"> | null;
+  updates: TrackingUpdate[];
 }
 
 // ---------- Customer accounts ----------

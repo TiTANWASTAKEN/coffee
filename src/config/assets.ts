@@ -27,7 +27,9 @@ export interface ImageAsset {
   srcSet?: string;
   /** Optional separately-cropped image for phones (below 768px), e.g. a portrait hero. */
   mobileSrc?: string;
-  /** Placeholder settings — only used while `ready` is false. */
+  /** `contain` keeps a studio product shot whole. Photos crop with `cover`. */
+  fit?: "cover" | "contain";
+  /** Stand-in settings — only used while `ready` is false. */
   placeholder: {
     label: string;
     variant: PlaceholderVariant;
@@ -39,15 +41,16 @@ function image(
   src: string,
   alt: string,
   placeholder: ImageAsset["placeholder"],
-  ready = false,
+  ready = true,
+  fit?: ImageAsset["fit"],
 ): ImageAsset {
-  return { src, ready, alt, placeholder };
+  return { src, ready, alt, placeholder, ...(fit ? { fit } : {}) };
 }
 
 function productImages(slug: "honest-truth" | "dark-truth" | "bitter-truth", name: string, tone: Tone) {
   const base = `/images/products/${slug}`;
   return {
-    packshot: image(`${base}/packshot.jpg`, `${name} coffee bag`, { label: name, variant: "packshot", tone }),
+    packshot: image(`${base}/packshot.jpg`, `${name} coffee`, { label: name, variant: "packshot", tone }),
     campaign: image(`${base}/campaign.jpg`, `${name} campaign photograph`, { label: `${name} — Campaign`, variant: "cup", tone }),
     gallery: [
       image(`${base}/gallery-1.jpg`, `${name} detail`, { label: `${name} — Detail`, variant: "beans", tone }),
@@ -60,7 +63,7 @@ function productImages(slug: "honest-truth" | "dark-truth" | "bitter-truth", nam
 export const assets = {
   hero: {
     main: {
-      ...image("/images/hero/hero.jpg", "A cup of black coffee photographed from above in low, warm light", {
+      ...image("/images/hero/hero.jpg", "A black cup of coffee on a dark table", {
         label: "Hero — Cinematic coffee",
         variant: "cup",
         tone: "neutral",
@@ -72,7 +75,10 @@ export const assets = {
 
   products: {
     "honest-truth": productImages("honest-truth", "Honest Truth", "honest"),
-    "dark-truth": productImages("dark-truth", "Dark Truth", "dark"),
+    "dark-truth": {
+      ...productImages("dark-truth", "Dark Truth", "dark"),
+      packshot: image("/images/products/dark-truth/packshot.jpg?v=3", "Dark Truth whole-bean coffee bag, 250g", { label: "Dark Truth", variant: "packshot", tone: "dark" }, true, "contain"),
+    },
     "bitter-truth": productImages("bitter-truth", "Bitter Truth", "bitter"),
   },
 

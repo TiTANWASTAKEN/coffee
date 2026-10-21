@@ -73,6 +73,7 @@ const badgeStyles: Record<PaymentStatus | Fulfillment | "active" | "hidden", str
   unfulfilled: "bg-warning/15 text-warning",
   packed: "bg-info/15 text-info",
   shipped: "bg-info/15 text-info",
+  out_for_delivery: "bg-info/15 text-info",
   delivered: "bg-success/15 text-success",
   cancelled: "bg-ivory/10 text-muted",
   active: "bg-success/15 text-success",
@@ -80,7 +81,7 @@ const badgeStyles: Record<PaymentStatus | Fulfillment | "active" | "hidden", str
 };
 
 export function Badge({ value }: { value: keyof typeof badgeStyles }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.75rem] font-medium capitalize ${badgeStyles[value]}`}>{value}</span>;
+  return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.75rem] font-medium capitalize ${badgeStyles[value]}`}>{value.replaceAll("_", " ")}</span>;
 }
 
 export function Loading() {

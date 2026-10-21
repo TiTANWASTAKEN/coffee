@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import express, { Router, type Request } from "express";
 import type { CheckoutConfig, CreateOrderResponse, OrderItem, PaymentMethod } from "../../shared/store";
-import { contactMatches, parseOrderCode, quote, upiIntent } from "../commerce";
+import { parseOrderCode, phoneMatches, quote, upiIntent } from "../commerce";
 import { config } from "../config";
 import { rememberAddress } from "../customers";
 import { currentCustomer } from "../customerSession";
@@ -46,7 +46,7 @@ function readItems(body: unknown): OrderItem[] {
     const product = getProductById(productId);
     if (!product || !product.active) throw badRequest("An item in your cart is no longer available.");
     if (product.stock < quantity) {
-      throw badRequest(product.stock === 0 ? `${product.name} is sold out.` : `Only ${product.stock} of ${product.name} left in stock.`);
+      throw badRequest(product.stock === 0 ? `${product.name} is coming soon.` : `Only ${product.stock} of ${product.name} left in stock.`);
     }
     return { productId, name: product.name, unitPrice: product.price, quantity };
   });
@@ -97,7 +97,7 @@ function createPendingOrder(req: Request) {
       idempotencyKey: idempotencyKey || null,
     });
   } catch (err) {
-    if (err instanceof Error && /stock|sold out/.test(err.message)) throw badRequest(err.message);
+    if (err instanceof Error && /stock|coming soon/.test(err.message)) throw badRequest(err.message);
     throw err;
   }
   if (account && req.body?.saveAddress === true) rememberAddress(account.id, customer);
@@ -216,11 +216,11 @@ const trackLimit = rateLimit({ max: 8, windowMinutes: 15, message: "Too many tra
 
 storeRouter.post("/track", trackLimit, (req, res) => {
   const code = typeof req.body?.orderCode === "string" ? req.body.orderCode : "";
-  const contact = typeof req.body?.contact === "string" ? req.body.contact : "";
+  const phone = typeof req.body?.phone === "string" ? req.body.phone : "";
   const id = parseOrderCode(code);
   const order = id ? getOrder({ id }) : undefined;
-  if (!order || !contactMatches(order.customer, contact)) {
-    throw notFound("We couldn't find an order with those details.");
+  if (!order || !phoneMatches(order.customer.phone, phone)) {
+    throw notFound("We couldn't find an order with that number and phone.");
   }
   res.json(toTrackedOrder(order));
 });

@@ -70,7 +70,6 @@ export function Placeholder({
           aria-hidden="true"
           className={`pointer-events-none absolute flex items-center gap-3 text-ivory/45 ${tagClassName ?? "inset-x-4 bottom-4 justify-between"}`}
         >
-          <span className="eyebrow shrink-0 whitespace-nowrap text-[9px]! tracking-[0.3em]!">Image placeholder</span>
           <span className="eyebrow min-w-0 truncate text-[9px]! tracking-[0.3em]!">{label}</span>
         </div>
       )}

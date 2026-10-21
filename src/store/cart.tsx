@@ -24,7 +24,7 @@ interface CartValue {
   isOpen: boolean;
   open: () => void;
   close: () => void;
-  add: (product: StoreProduct, quantity?: number) => void;
+  add: (product: StoreProduct, quantity?: number, options?: { open?: boolean }) => void;
   setQuantity: (productId: number, quantity: number) => void;
   remove: (productId: number) => void;
   clear: () => void;
@@ -69,14 +69,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
     });
   }, [stored, catalog]);
 
-  const add = useCallback((product: StoreProduct, quantity = 1) => {
+  const add = useCallback((product: StoreProduct, quantity = 1, options?: { open?: boolean }) => {
     setStored((current) => {
       const existing = current.find((l) => l.productId === product.id);
       const limit = Math.min(product.stock, MAX_PER_ITEM);
       if (existing) return current.map((l) => (l.productId === product.id ? { ...l, quantity: Math.min(l.quantity + quantity, limit) } : l));
       return [...current, { productId: product.id, quantity: Math.min(quantity, limit) }];
     });
-    setIsOpen(true);
+    if (options?.open !== false) setIsOpen(true);
     track("add_to_cart", { product: product.slug, quantity });
   }, []);
 

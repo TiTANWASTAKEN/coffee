@@ -70,16 +70,15 @@ export default function OrderConfirmation() {
                         ? "Your order is placed, but it is not paid yet. We will not ship it until the payment is verified."
                         : "We’re waiting for the bank to confirm your payment. This page will update automatically."}
               </p>
-              {order.status === "paid" && !customer && (
-                <p className="mt-6 max-w-md text-body-sm text-faint">Bookmark this page — it’s where you can track your order.</p>
+              {order.status === "paid" && (
+                <p className="mt-6 max-w-md text-body-sm text-faint">
+                  Save <span className="text-ivory">{order.code}</span> and the phone on this order. Both are needed to track it.
+                </p>
               )}
               {order.status === "pending" && order.paymentMethod === "upi" && <UpiReference publicId={order.id} />}
               <div className="mt-10 flex flex-wrap gap-4">
-                {customer && (
-                  <ButtonLink to="/account">
-                    Your orders
-                  </ButtonLink>
-                )}
+                <ButtonLink to={`/track-order?code=${encodeURIComponent(order.code)}`}>Track this order</ButtonLink>
+                {customer && <ButtonLink to="/account">Your orders</ButtonLink>}
                 <ButtonLink to="/shop" variant="outline">
                   Continue shopping
                 </ButtonLink>

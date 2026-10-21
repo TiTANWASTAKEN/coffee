@@ -11,7 +11,12 @@ try {
 const rootDir = path.resolve(import.meta.dirname, "..");
 const dataDir = path.resolve(rootDir, process.env.DATA_DIR ?? "data");
 const uploadsDir = path.join(dataDir, "uploads");
-mkdirSync(uploadsDir, { recursive: true });
+try {
+  mkdirSync(uploadsDir, { recursive: true });
+} catch (err) {
+  // Netlify's function bundle is read-only. The hosted store does not use this folder.
+  console.warn("Could not create the local data directory.", err instanceof Error ? err.message : "");
+}
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -60,6 +65,8 @@ export const config = {
     keySecret: process.env.RAZORPAY_KEY_SECRET?.trim() ?? "",
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim() ?? "",
   },
+  /** true limits checkout to NCR PINs. false accepts any valid Indian PIN. */
+  ncrOnly: process.env.NCR_ONLY?.trim().toLowerCase() !== "false",
   /** Explicit paise. Unset means "not chosen yet" and checkout shows ₹0 rather than a guessed rate. */
   shipping: {
     configured: process.env.SHIPPING_PAISE !== undefined && process.env.SHIPPING_PAISE.trim() !== "",

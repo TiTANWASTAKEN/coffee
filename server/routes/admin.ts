@@ -3,11 +3,11 @@ import { unlink } from "node:fs/promises";
 import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { FULFILLMENT_STATES, type AdminStats, type Fulfillment, type PaymentStatus, type StoreProduct } from "../../shared/store";
+import { FULFILLMENT_STATES, fulfillmentLabel, type AdminStats, type Fulfillment, type PaymentStatus, type StoreProduct } from "../../shared/store";
 import { checkCredentials, endSession, loginRateLimit, requireAdmin, resetLoginAttempts, sessionEmail, startSession } from "../auth";
 import { canChangeFulfillment, canRefund } from "../commerce";
 import { config } from "../config";
-import { db, getOrder, getProductById, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock } from "../db";
+import { addOrderUpdate, db, getOrder, getProductById, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock } from "../db";
 import { badRequest, HttpError, idParam, int, notFound, str } from "../http";
 import { notifyOrderOnce, resendOrderEmail } from "../notify";
 import { WaitlistStorageError } from "../supabaseWaitlist";
@@ -102,7 +102,7 @@ adminRouter.patch("/orders/:id", (req, res) => {
     const problem = canChangeFulfillment(order.fulfillment, fulfillment, { status: order.status, method: order.paymentMethod });
     if (problem) throw badRequest(problem);
     if (fulfillment === "cancelled" && order.fulfillment !== "cancelled") releaseStock(order);
-    const dispatchedAt = fulfillment === "shipped" ? "datetime('now')" : null;
+    const dispatchedAt = fulfillment === "shipped" || fulfillment === "out_for_delivery" ? "datetime('now')" : null;
     const deliveredAt = fulfillment === "delivered" ? "datetime('now')" : null;
     db.prepare("UPDATE orders SET fulfillment = ? WHERE id = ?").run(fulfillment, id);
     if (dispatchedAt || deliveredAt) {
@@ -114,6 +114,7 @@ adminRouter.patch("/orders/:id", (req, res) => {
            updated_at = datetime('now')`,
       ).run(id);
     }
+    if (fulfillment !== order.fulfillment) addOrderUpdate(id, fulfillmentLabel[fulfillment], "");
     recordAdminEvent(id, "fulfillment", `${order.fulfillment} → ${fulfillment}`);
   }
 
@@ -122,12 +123,16 @@ adminRouter.patch("/orders/:id", (req, res) => {
     const courier = str(body.courier, "Courier", { max: 80, optional: true });
     const trackingRef = str(body.trackingRef, "Tracking reference", { max: 80, optional: true });
     const trackingUrl = str(body.trackingUrl, "Tracking URL", { max: 300, optional: true });
+    const location = str(body.location, "Where it has reached", { max: 160, optional: true });
+    const note = str(body.note, "Tracking note", { max: 240, optional: true });
     if (trackingUrl && !/^https:\/\//.test(trackingUrl)) throw badRequest("Tracking URL must start with https://");
     db.prepare(
-      `INSERT INTO shipments (order_id, courier, tracking_ref, tracking_url) VALUES (?, ?, ?, ?)
-       ON CONFLICT(order_id) DO UPDATE SET courier = excluded.courier, tracking_ref = excluded.tracking_ref, tracking_url = excluded.tracking_url, updated_at = datetime('now')`,
-    ).run(id, courier, trackingRef, trackingUrl);
-    recordAdminEvent(id, "shipment", trackingRef || courier);
+      `INSERT INTO shipments (order_id, courier, tracking_ref, tracking_url, location) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(order_id) DO UPDATE SET courier = excluded.courier, tracking_ref = excluded.tracking_ref, tracking_url = excluded.tracking_url, location = excluded.location, updated_at = datetime('now')`,
+    ).run(id, courier, trackingRef, trackingUrl, location);
+    if (note) addOrderUpdate(id, "Update", note);
+    else if (location && location !== (order.shipment?.location ?? "")) addOrderUpdate(id, "Reached", location);
+    recordAdminEvent(id, "shipment", location || note || trackingRef || courier);
   }
 
   res.json(getOrder({ id }));

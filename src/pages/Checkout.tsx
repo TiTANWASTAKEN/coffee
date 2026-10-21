@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Lock } from "lucide-react";
 import type { CheckoutConfig, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
+import { accountsEnabled } from "@/config/features";
 import { site } from "@/config/site";
 import { getProduct } from "@/data/products";
 import { AddressLines } from "@/components/account/AddressForm";
@@ -186,7 +187,10 @@ export default function Checkout() {
             }
           },
         },
-        (message) => setError(message),
+        (message) => {
+          setPhase("idle");
+          setError(message);
+        },
       );
     } catch (err) {
       setPhase("idle");
@@ -235,7 +239,7 @@ export default function Checkout() {
 
         <form onSubmit={onSubmit} className="mt-14 grid gap-14 lg:grid-cols-12 lg:gap-8">
           <div className="lg:col-span-7">
-            {!accountLoading && !customer && (
+            {accountsEnabled && !accountLoading && !customer && (
               <p className="mb-10 border border-line px-5 py-4 text-body-sm text-muted">
                 Have an account?{" "}
                 <Link to="/account/login?next=/checkout" className="text-ivory underline">
@@ -297,7 +301,7 @@ export default function Checkout() {
                 onChange={set("postalCode")}
                 required
               />
-              {customer && !addresses.some(matchesDetails) && (
+              {accountsEnabled && customer && !addresses.some(matchesDetails) && (
                 <label className="flex items-center gap-3 text-body-sm text-muted sm:col-span-2">
                   <input type="checkbox" checked={saveAddress} onChange={(e) => setSaveAddress(e.target.checked)} className="size-4 accent-ivory" />
                   Save this address to my account

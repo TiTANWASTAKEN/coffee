@@ -46,7 +46,7 @@ export function SmartImage({
             decoding="async"
             fetchPriority={priority ? "high" : "auto"}
             onError={() => setFailed(true)}
-            className={`absolute inset-0 h-full w-full object-cover ${imgClassName ?? ""}`}
+            className={`absolute inset-0 h-full w-full ${asset.fit === "contain" ? "object-contain" : "object-cover"} ${imgClassName ?? ""}`}
           />
         </picture>
       ) : (

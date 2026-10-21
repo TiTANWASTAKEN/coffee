@@ -48,17 +48,22 @@ function digits(value: string): string {
   return value.replace(/\D/g, "").slice(-10);
 }
 
+/** Last 10 digits, so +91 98100 12345 and 9810012345 are the same number. */
+export function phoneMatches(orderPhone: string, given: string): boolean {
+  const givenDigits = digits(given);
+  const orderDigits = digits(orderPhone);
+  return givenDigits.length === 10 && orderDigits.length === 10 && givenDigits === orderDigits;
+}
+
 /**
- * The second factor on the tracking page. An email must match exactly.
- * A phone matches on the last 10 digits. Anything else does not match.
+ * Email must match exactly. A phone matches on the last 10 digits.
+ * Anything else does not match.
  */
 export function contactMatches(order: { email: string; phone: string }, given: string): boolean {
   const value = given.trim().toLowerCase();
   if (!value) return false;
   if (value.includes("@")) return value === order.email.trim().toLowerCase();
-  const givenDigits = digits(value);
-  const orderDigits = digits(order.phone);
-  return givenDigits.length === 10 && orderDigits.length === 10 && givenDigits === orderDigits;
+  return phoneMatches(order.phone, value);
 }
 
 export { nextFulfillments };
@@ -66,7 +71,7 @@ export { nextFulfillments };
 export function canChangeFulfillment(from: Fulfillment, to: Fulfillment, payment: { status: PaymentStatus; method: PaymentMethod }): string | null {
   if (from === to) return null;
   if (!nextFulfillments(from).includes(to)) return `An order that is ${from} cannot move to ${to}.`;
-  const dispatching = to === "packed" || to === "shipped" || to === "delivered";
+  const dispatching = to === "packed" || to === "shipped" || to === "out_for_delivery" || to === "delivered";
   if (dispatching && payment.method !== "cod" && payment.status !== "paid") {
     return "Verify the payment before packing or shipping this order.";
   }
@@ -75,7 +80,9 @@ export function canChangeFulfillment(from: Fulfillment, to: Fulfillment, payment
 
 export function canRefund(status: PaymentStatus, fulfillment: Fulfillment): string | null {
   if (status !== "paid") return "Only a verified payment can be refunded.";
-  if (fulfillment === "delivered" || fulfillment === "shipped") return "Cancel is not available after dispatch. Mark the order delivered, then refund it outside this screen if the courier returns it.";
+  if (fulfillment === "delivered" || fulfillment === "shipped" || fulfillment === "out_for_delivery") {
+    return "Cancel is not available after dispatch. Mark the order delivered, then refund it outside this screen if the courier returns it.";
+  }
   return null;
 }
 
@@ -147,7 +154,8 @@ export function orderEmail(input: OrderEmailInput): { subject: string; text: str
     "Ship to",
     ...input.addressLines,
     "",
-    `Track your order: ${input.trackUrl}`,
+    `Track ${input.code} with the phone number from checkout:`,
+    input.trackUrl,
     `Questions: ${input.supportEmail}`,
   ];
 

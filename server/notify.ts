@@ -1,15 +1,15 @@
-import { letterFor, orderEmail, type OrderLetter } from "./commerce";
-import { config } from "./config";
+import { letterFor, type OrderLetter } from "./commerce";
 import { claimConfirmationEmail, db, getOrder } from "./db";
-import { sendEmail } from "./email";
+import { deliverOrderMail, type OrderMail } from "./orderMail";
 
-function messageFor(orderId: number, letter: OrderLetter) {
+function mailFor(orderId: number, letter: OrderLetter): OrderMail | null {
   const order = getOrder({ id: orderId });
   if (!order) return null;
-  const built = orderEmail({
+  return {
     code: order.code,
     createdAt: order.createdAt,
     customerName: order.customer.name,
+    customerEmail: order.customer.email,
     items: order.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
@@ -17,28 +17,19 @@ function messageFor(orderId: number, letter: OrderLetter) {
     method: order.paymentMethod,
     letter,
     addressLines: [order.customer.line1, order.customer.line2, `${order.customer.city}, ${order.customer.state} ${order.customer.postalCode}`].filter(Boolean),
-    trackUrl: `${config.publicUrl}/track-order`,
-    supportEmail: config.supportEmail,
-  });
-  return { order, built };
+  };
 }
 
-/** Sends the customer letter once. A second call (webhook retry) does nothing. */
+/** Sends the customer letter once, and a copy to the shop. A second call (webhook retry) does nothing. */
 export async function notifyOrderOnce(orderId: number): Promise<void> {
   const order = getOrder({ id: orderId });
   if (!order) return;
   const letter = letterFor(order.paymentMethod, order.status);
   if (!letter || !claimConfirmationEmail(order.id, letter)) return;
-  const built = messageFor(order.id, letter);
-  if (!built) return;
-  const sent = await sendEmail({ to: built.order.customer.email, subject: built.built.subject, text: built.built.text });
-  if (!sent) {
-    db.prepare("UPDATE orders SET confirmation_sent = 0, confirmation_letter = '' WHERE id = ?").run(order.id);
-    return;
-  }
-  if (config.adminNotifyEmail) {
-    await sendEmail({ to: config.adminNotifyEmail, subject: `New order ${built.order.code}`, text: built.built.text });
-  }
+  const mail = mailFor(order.id, letter);
+  if (!mail) return;
+  const sent = await deliverOrderMail(mail);
+  if (!sent) db.prepare("UPDATE orders SET confirmation_sent = 0, confirmation_letter = '' WHERE id = ?").run(order.id);
 }
 
 export async function resendOrderEmail(orderId: number): Promise<boolean> {
@@ -46,7 +37,7 @@ export async function resendOrderEmail(orderId: number): Promise<boolean> {
   if (!order) return false;
   const letter = letterFor(order.paymentMethod, order.status);
   if (!letter) return false;
-  const built = messageFor(order.id, letter);
-  if (!built) return false;
-  return sendEmail({ to: built.order.customer.email, subject: built.built.subject, text: built.built.text });
+  const mail = mailFor(order.id, letter);
+  if (!mail) return false;
+  return deliverOrderMail(mail);
 }

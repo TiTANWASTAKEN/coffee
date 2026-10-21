@@ -55,7 +55,7 @@ export default function Dashboard() {
                     <li key={p.id}>
                       <Link to={`/admin/products/${p.id}`} className="flex items-center justify-between py-2.5 text-body-sm hover:text-ivory">
                         <span>{p.name}</span>
-                        <span className={p.stock === 0 ? "text-danger" : "text-warning"}>{p.stock === 0 ? "Sold out" : `${p.stock} left`}</span>
+                        <span className={p.stock === 0 ? "text-danger" : "text-warning"}>{p.stock === 0 ? "Coming soon" : `${p.stock} left`}</span>
                       </Link>
                     </li>
                   ))}

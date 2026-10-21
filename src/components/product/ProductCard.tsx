@@ -11,11 +11,14 @@ import { PriceTag } from "./PriceTag";
 interface ProductCardProps {
   product: CoffeeProduct;
   headingLevel?: "h2" | "h3";
+  /** Designed bag, used for coffees that don't have their own pack shot yet. */
+  illustrated?: boolean;
 }
 
-export function ProductCard({ product, headingLevel: Heading = "h3" }: ProductCardProps) {
+export function ProductCard({ product, headingLevel: Heading = "h3", illustrated = false }: ProductCardProps) {
   const href = `/coffee/${product.slug}`;
-  const { image } = useCoffeeImages(product);
+  const { image: photo } = useCoffeeImages(product);
+  const image = illustrated ? { ...photo, ready: false } : photo;
 
   return (
     <article

@@ -29,12 +29,11 @@ export const site = {
    */
   amazonTracking: {} as Record<string, string>,
 
-  /** Placeholder — replace with the real address. */
-  contactEmail: "hello@yourdomain.com",
+  contactEmail: "thebittertruthcoffee@gmail.com",
 
   /** "#" = not live yet. Links render as "soon" until replaced. */
   social: [
-    { label: "Instagram", href: "#" },
+    { label: "Instagram", href: "https://www.instagram.com/bittertruthcoffee.in/" },
     { label: "YouTube", href: "#" },
     { label: "Facebook", href: "#" },
   ],
@@ -52,6 +51,7 @@ export const primaryNav: NavItem[] = waitlistEnabled
         ? [
             { label: "Shop", to: "/shop" },
             { label: "Our Coffee", to: "/coffee" },
+            { label: "Track", to: "/track-order" },
           ]
         : [{ label: "Shop", to: "/coffee" }]),
       { label: "Story", to: "/story" },

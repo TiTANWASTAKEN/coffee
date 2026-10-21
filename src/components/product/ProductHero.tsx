@@ -103,12 +103,12 @@ export function ProductHero({ product }: { product: CoffeeProduct }) {
         </div>
 
         <motion.div
-          className="relative order-1 aspect-[4/5] overflow-hidden lg:order-2 lg:col-span-6 lg:col-start-7 lg:aspect-auto lg:h-[80svh] lg:max-h-[56rem]"
+          className={`relative order-1 aspect-[4/5] overflow-hidden lg:order-2 lg:col-span-6 lg:col-start-7 ${image.fit === "contain" ? "" : "lg:aspect-auto lg:h-[80svh] lg:max-h-[56rem]"}`}
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, ease }}
         >
-          <motion.div className="absolute -inset-y-[8%] inset-x-0 will-change-transform" style={{ y: imageY }}>
+          <motion.div className={image.fit === "contain" ? "absolute inset-0" : "absolute -inset-y-[8%] inset-x-0 will-change-transform"} style={image.fit === "contain" ? undefined : { y: imageY }}>
             <SmartImage asset={image} priority sizes="(min-width: 1024px) 50vw, 100vw" className="h-full w-full" />
           </motion.div>
         </motion.div>

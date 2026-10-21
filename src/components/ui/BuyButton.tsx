@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router";
 import { storeEnabled } from "@/config/features";
 import { site } from "@/config/site";
 import type { CoffeeProduct } from "@/data/products";
@@ -68,17 +69,18 @@ export function ShopButton({ variant = "primary", size = "md", className = "" }:
   );
 }
 
-export function BuyButton({ product, label = "Add to cart", variant = "primary", size = "md", compact = false, className = "" }: BuyButtonProps) {
+export function BuyButton({ product, label = "Buy now", variant = "primary", size = "md", compact = false, className = "" }: BuyButtonProps) {
   const { status } = useCatalog();
   const storeProduct = useStoreProduct(product.slug);
   const cart = useCart();
+  const navigate = useNavigate();
 
   const disabled = (text: string, title?: string) => <DisabledButton text={text} srPrefix={product.name} title={title} size={size} className={className} />;
 
   if (status === "loading") return disabled("Loading…");
 
   if (storeProduct) {
-    if (storeProduct.stock === 0) return disabled("Sold out");
+    if (storeProduct.stock === 0) return disabled("Coming soon");
     return (
       <Button
         variant={variant}
@@ -87,7 +89,8 @@ export function BuyButton({ product, label = "Add to cart", variant = "primary",
         className={className}
         onClick={() => {
           track("buy_click", { product: product.slug });
-          cart.add(storeProduct);
+          cart.add(storeProduct, 1, { open: false });
+          navigate("/checkout");
         }}
       >
         {compact ? label : `${label} — ${formatPrice(storeProduct.price)}`}

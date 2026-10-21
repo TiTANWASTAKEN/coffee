@@ -3,6 +3,7 @@ import { checkCredentials, createAdminToken, readAdminToken } from "../../server
 import { HttpError } from "../../server/http";
 import { WaitlistStorageError } from "../../server/supabaseWaitlist";
 import { readEmail } from "../../server/validate";
+import { handleAdminStore, handlePublicStore } from "../../server/hostedStore";
 import { loadWaitlist, saveWaitlistEmail, waitlistUsesSupabase } from "../../server/waitlistStore";
 
 const COOKIE = "ht_admin";
@@ -75,6 +76,16 @@ async function handle(req: Request): Promise<Response> {
   const secure = new URL(req.url).protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
   const admin = readAdminToken(cookieValue(req, COOKIE));
 
+  if (req.method === "POST" && (path === "/api/checkout/order" || path === "/api/checkout/verify" || path === "/api/checkout/simulate")) {
+    if (limited(`checkout:${clientIp(req)}`, 20)) return json(429, { error: "Too many checkout attempts. Try again in a few minutes." });
+  }
+  if (req.method === "POST" && path === "/api/track") {
+    if (limited(`track:${clientIp(req)}`, 8)) return json(429, { error: "Too many tracking attempts. Try again in a few minutes." });
+  }
+
+  const storeResponse = await handlePublicStore(req, path);
+  if (storeResponse) return storeResponse;
+
   if (req.method === "POST" && path === "/api/waitlist") {
     if (limited(`waitlist:${clientIp(req)}`, 8)) return json(429, { error: "Too many attempts. Try again in a few minutes." });
     if (!waitlistUsesSupabase()) return json(503, { error: "Waitlist storage is not configured." });
@@ -99,6 +110,8 @@ async function handle(req: Request): Promise<Response> {
   if (path.startsWith("/api/admin")) {
     if (!admin) return json(401, { error: "Please sign in." });
     if (req.method === "GET" && path === "/api/admin/me") return json(200, { email: admin });
+    const adminStore = await handleAdminStore(req, path);
+    if (adminStore) return adminStore;
     if (req.method === "GET" && path === "/api/admin/waitlist") {
       if (!waitlistUsesSupabase()) return json(503, { error: "Waitlist storage is not configured." });
       return json(200, await loadWaitlist());

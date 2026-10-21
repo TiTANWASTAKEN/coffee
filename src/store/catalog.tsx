@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { StoreProduct } from "@shared/store";
 import type { ImageAsset, Tone } from "@/config/assets";
 import { storeEnabled } from "@/config/features";
-import { getProduct, type CoffeeProduct } from "@/data/products";
+import { getProduct, products as coffeeOrder, type CoffeeProduct } from "@/data/products";
 import { api } from "@/lib/api";
 
 type Status = "loading" | "ready" | "error";
@@ -25,7 +25,10 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!storeEnabled) return;
     try {
-      setProducts(await api<StoreProduct[]>("/products"));
+      const list = await api<StoreProduct[]>("/products");
+      const rank = new Map(coffeeOrder.map((coffee, index) => [coffee.slug, index]));
+      list.sort((a, b) => (rank.get(a.slug) ?? 99) - (rank.get(b.slug) ?? 99));
+      setProducts(list);
       setStatus("ready");
     } catch {
       setStatus((s) => (s === "ready" ? s : "error"));

@@ -12,9 +12,9 @@ The company name lives in `src/config/site.ts` (`name: "Bitter Truth Coffee"`, `
 
 **v0 — waitlist:** the public site is an email list. Every signup is saved and shown in `/admin` under Waitlist.
 
-**v1 — Amazon:** a brand site — every buy button goes to Amazon. No server needed; it can be hosted statically.
+**v1 — store:** Buy now opens checkout, then Razorpay. The customer and you both get an email. Tracking at `/track-order` needs the order number and the phone used at checkout. There is no customer login. Admin login and the dashboard stay. Host this on Netlify and keep orders in Supabase.
 
-**v2 — store:** customers add coffees to a cart and pay on the site through **Razorpay** (UPI, cards, netbanking, wallets), with optional customer accounts (saved addresses, order history and tracking). The admin shows orders and sales, and lets you manage products, prices, stock and images.
+**v2 — store + accounts:** the same shop, with the customer-account API switched on as well. The public site still hides account pages.
 
 ### Choosing the version
 
@@ -22,13 +22,13 @@ One setting in `.env` picks the version — restart `npm run dev` (or rebuild) a
 
 ```bash
 SITE_VERSION=v0   # public waitlist; emails appear in /admin
-SITE_VERSION=v1   # Amazon-only brand site
-SITE_VERSION=v2   # direct store: shop, cart, Razorpay checkout, customer accounts
+SITE_VERSION=v1   # direct store: Buy now, Razorpay, tracking by order number and phone
+SITE_VERSION=v2   # same store, plus the customer-account API
 ```
 
 In **v0** the public site is the waitlist. The shop, cart and account pages are not shown. Signups are stored in the database and listed after you sign in at `/admin`.
 
-In **v1** the shop, cart, checkout, order and account pages don't exist (they 404), the cart and account icons are hidden, prices aren't shown, the site makes no API calls, and the server switches the store and account APIs off. The admin works in every version.
+In **v1** Buy now adds the coffee and opens checkout. Razorpay runs there, then the confirmation page. Tracking asks for the order number and the phone on the order, and shows the order only when both match. Customer account pages are hidden. The admin works in every version.
 
 **Stack:** React 19 · TypeScript · Vite 7 · Tailwind CSS 4 · Framer Motion 12 · React Router 7 · Lucide icons · self-hosted fonts (Playfair 2 + Instrument Sans via Fontsource).
 **Server:** Express 5 · SQLite (Node's built-in `node:sqlite`) · Multer for uploads · Razorpay Orders API.
@@ -86,7 +86,7 @@ Without Razorpay keys the site still runs, but checkout shows "Payments are not 
 | `/shop/:slug` | Detail page for products added in the admin |
 | `/checkout` | Contact + shipping form, order summary, Pay button |
 | `/order/:id` | Confirmation page (the id is a random token, not the order number) |
-| `/track-order` | Customer tracking. Needs the order code and the email or phone on the order. |
+| `/track-order` | Customer tracking. Needs the order number and the phone used at checkout. |
 
 - The **cart** lives in `localStorage` and opens as a drawer from the bag icon in the navbar.
 - **Prices and stock always come from the server.** The browser only sends product ids and quantities; the server recalculates the total and checks stock before creating the Razorpay order.
@@ -140,25 +140,18 @@ Sessions are an httpOnly, SameSite=Strict cookie that lasts 7 days. Login is rat
 
 ## Deploying
 
-**v0, free:** Netlify hosts the site and a function. Supabase’s free database stores the emails. Checkout is not part of this deploy.
+**Netlify + Supabase** is the store. `npm start` on your machine still uses the local SQLite file so you can run the site before the database is connected. The deployed site does not use that file.
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. Open the SQL editor and run `supabase/waitlist.sql`.
+2. Open the SQL editor and run `supabase/store.sql`. Run `supabase/waitlist.sql` as well if you want the email list.
 3. In Supabase → Project Settings → API, copy the project URL and the `service_role` key.
-4. In Netlify → Site configuration → Environment variables, set `SITE_VERSION=v0`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `JWT_SECRET`. Do not commit those values.
-5. Publish this repo. The build command is `npm run build` and the publish directory is `dist`.
-6. Open `/admin`, sign in, and the Waitlist page lists every email.
+4. In Netlify → Site configuration → Environment variables, set `SITE_VERSION=v1`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFY_EMAIL` and `PUBLIC_URL` (your `https://` site address, used in the tracking link). Do not commit those values.
+5. Publish this repo. The build command is `npm run build` and the publish directory is `dist`. `/api/*` is the Netlify function in `netlify.toml`.
+6. Open `/admin`, sign in, set real prices and stock, then place a test order. Tracking is at `/track-order`.
 
-**v1:** `npm run build` and host `dist/` on any static host. `netlify.toml`, `vercel.json` and `public/_redirects` send unknown paths to `index.html`. The admin and checkout will not work on a static host, because they need the API.
+Razorpay’s per-payment fee still applies. Test Mode keys are the ones to use until you are ready to charge people. Without `RESEND_API_KEY` and `EMAIL_FROM`, order emails are not delivered.
 
-**v2:** set `SITE_VERSION=v2` on the host (it's read at build time and by the server). The shop needs a long-lived Node 22 process **with a persistent disk** — for example Render, Railway, Fly.io or a VPS. Netlify can still publish the static `dist/` folder, but it will not run checkout or keep the SQLite order database. Supabase’s free tier does not remove Razorpay’s per-payment fee.
-
-1. Build command: `npm install && npm run build`
-2. Start command: `npm start`
-3. Set the environment variables above, and point `DATA_DIR` at the persistent disk (e.g. `/var/data`) so orders and images survive redeploys.
-4. Serve over HTTPS (the admin cookie is marked `Secure` behind HTTPS automatically).
-
-Back up `DATA_DIR` regularly when you run the store server — it contains `store.db` and every uploaded image. To restore, stop the server, replace that directory from the backup, and start again. Waitlist emails stored in Supabase are backed up from the Supabase dashboard.
+`npm start` locally keeps serving checkout from SQLite on port 4000. That database is separate from Supabase.
 
 ---
 

@@ -15,7 +15,7 @@ export function AddToCartButton({ product, quantity = 1, variant = "primary", si
   if (product.stock === 0) {
     return (
       <button type="button" disabled className={`${buttonClasses("outline", size, className)} border-dashed! text-muted! before:hidden`}>
-        Sold out
+        Coming soon
       </button>
     );
   }
