@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet } from "react-router";
-import { ExternalLink, LayoutDashboard, LogOut, Mail, Package, Receipt } from "lucide-react";
+import { ExternalLink, LayoutDashboard, LogOut, Mail, Package, Receipt, Ticket } from "lucide-react";
 import { site } from "@/config/site";
 import { useAdminAuth } from "./auth";
 
@@ -8,6 +8,7 @@ const nav = [
   { to: "/admin/waitlist", label: "Waitlist", icon: Mail, end: false },
   { to: "/admin/orders", label: "Orders", icon: Receipt, end: false },
   { to: "/admin/products", label: "Products", icon: Package, end: false },
+  { to: "/admin/coupons", label: "Coupons", icon: Ticket, end: false },
 ];
 
 export function AdminLayout() {

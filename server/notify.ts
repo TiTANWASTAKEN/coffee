@@ -13,6 +13,8 @@ function mailFor(orderId: number, letter: OrderLetter): OrderMail | null {
     items: order.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     total: order.amount,
     method: order.paymentMethod,
     letter,

@@ -14,11 +14,55 @@ export interface PricedLine {
 export interface Quote {
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
   total: number;
 }
 
+const COUPON_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export function normalizeCouponCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+export function isCouponCode(code: string): boolean {
+  return /^[A-Z0-9-]{3,20}$/.test(code);
+}
+
+/** A short code such as BT7K2Q. The caller checks that it is not already in use. */
+export function generateCouponCode(): string {
+  let code = "BT";
+  for (let i = 0; i < 6; i++) code += COUPON_ALPHABET[Math.floor(Math.random() * COUPON_ALPHABET.length)];
+  return code;
+}
+
+export function couponOfferError(kind: string, value: number): string | null {
+  if (kind !== "flat" && kind !== "percent") return "Choose a rupee amount or a percent.";
+  if (kind === "percent") {
+    if (!Number.isInteger(value) || value < 1 || value > 100) return "Percent must be between 1 and 100.";
+    return null;
+  }
+  if (!Number.isInteger(value) || value < 100 || value > 10_000_000) return "The discount must be at least ₹1.";
+  return null;
+}
+
+/** Paise off the coffee. Percent uses whole paise, rounded down. */
+export function couponDiscount(subtotal: number, kind: "flat" | "percent", value: number): number {
+  if (subtotal <= 0) return 0;
+  if (kind === "percent") return Math.min(subtotal, Math.floor((subtotal * value) / 100));
+  return Math.min(subtotal, Math.max(0, value));
+}
+
+/** Leaves at least ₹1 to pay when the order can cover it. Shipping is never discounted. */
+export function payableDiscount(subtotal: number, shippingPaise: number, discountPaise: number): number {
+  if (!Number.isInteger(discountPaise) || discountPaise < 0) throw new Error("Invalid discount.");
+  const offered = Math.min(discountPaise, Math.max(0, subtotal));
+  const undiscounted = subtotal + shippingPaise;
+  if (undiscounted >= 100 && undiscounted - offered < 100) return undiscounted - 100;
+  return offered;
+}
+
 /** Shipping is whatever the operator configured. This function does not invent a rate. */
-export function quote(items: PricedLine[], shippingPaise: number): Quote {
+export function quote(items: PricedLine[], shippingPaise: number, discountPaise = 0): Quote {
   if (!Number.isInteger(shippingPaise) || shippingPaise < 0 || shippingPaise > 10_000_000) {
     throw new Error("Shipping charge is not configured as a whole number of paise.");
   }
@@ -29,7 +73,8 @@ export function quote(items: PricedLine[], shippingPaise: number): Quote {
     if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) throw new Error("Invalid quantity.");
     subtotal += item.unitPrice * item.quantity;
   }
-  return { subtotal, shippingPaise, total: subtotal + shippingPaise };
+  const discount = payableDiscount(subtotal, shippingPaise, discountPaise);
+  return { subtotal, shippingPaise, discountPaise: discount, total: subtotal - discount + shippingPaise };
 }
 
 export function formatOrderCode(id: number): string {
@@ -114,6 +159,8 @@ export interface OrderEmailInput {
   items: { name: string; quantity: number; unitPrice: number }[];
   subtotal: number;
   shippingPaise: number;
+  discountPaise?: number;
+  couponCode?: string;
   total: number;
   method: PaymentMethod;
   letter: OrderLetter;
@@ -147,6 +194,9 @@ export function orderEmail(input: OrderEmailInput): { subject: string; text: str
     "",
     `Subtotal: ${rupees(input.subtotal)}`,
     `Shipping: ${rupees(input.shippingPaise)}`,
+    ...((input.discountPaise ?? 0) > 0
+      ? [`Discount${input.couponCode ? ` (${input.couponCode})` : ""}: -${rupees(input.discountPaise ?? 0)}`]
+      : []),
     `Total: ${rupees(input.total)}`,
     `Method: ${input.method}`,
     paymentLine,

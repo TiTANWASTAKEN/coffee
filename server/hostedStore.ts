@@ -1,15 +1,18 @@
 import { randomBytes } from "node:crypto";
-import type { AdminOrder, AdminStats, CheckoutConfig, CreateOrderResponse, CustomerDetails, Fulfillment, PaymentMethod, PaymentStatus, StoreProduct, TrackingUpdate } from "../shared/store";
+import type { AdminOrder, AdminStats, CheckoutConfig, Coupon, CouponQuote, CreateOrderResponse, CustomerDetails, Fulfillment, PaymentMethod, PaymentStatus, StoreProduct, TrackingUpdate } from "../shared/store";
 import { FULFILLMENT_STATES, fulfillmentLabel } from "../shared/store";
-import { canChangeFulfillment, canRefund, formatOrderCode, letterFor, parseOrderCode, phoneMatches, upiIntent } from "./commerce";
+import { canChangeFulfillment, canRefund, couponDiscount, couponOfferError, formatOrderCode, generateCouponCode, isCouponCode, letterFor, normalizeCouponCode, parseOrderCode, payableDiscount, phoneMatches, quote, upiIntent } from "./commerce";
 import { config } from "./config";
 import { badRequest, HttpError, int, notFound, str } from "./http";
 import { deliverOrderMail } from "./orderMail";
 import { createRazorpayOrder, razorpayConfigured, razorpayKeyId, verifyPaymentSignature, verifyWebhookSignature, webhookConfigured } from "./razorpay";
 import { readCustomerDetails } from "./validate";
 
-const ORDER_SELECT =
-  "id,public_id,razorpay_order_id,razorpay_payment_id,status,fulfillment,payment_method,subtotal,shipping_paise,amount,currency,notes,upi_reference,stock_held,confirmation_letter,customer_name,customer_email,customer_phone,address_line1,address_line2,city,state,postal_code,created_at,paid_at,order_items(product_id,name,unit_price,quantity),shipments(courier,tracking_ref,tracking_url,location,dispatched_at,delivered_at),order_updates(label,note,created_at)";
+const ORDER_TAIL =
+  "currency,notes,upi_reference,stock_held,confirmation_letter,customer_name,customer_email,customer_phone,address_line1,address_line2,city,state,postal_code,created_at,paid_at,order_items(product_id,name,unit_price,quantity),shipments(courier,tracking_ref,tracking_url,location,dispatched_at,delivered_at),order_updates(label,note,created_at)";
+const ORDER_SELECT_PLAIN = `id,public_id,razorpay_order_id,razorpay_payment_id,status,fulfillment,payment_method,subtotal,shipping_paise,amount,${ORDER_TAIL}`;
+const ORDER_SELECT_COUPON = `id,public_id,razorpay_order_id,razorpay_payment_id,status,fulfillment,payment_method,subtotal,shipping_paise,discount_paise,coupon_code,amount,${ORDER_TAIL}`;
+let orderSelect = ORDER_SELECT_COUPON;
 
 export function supabaseStoreConfigured(): boolean {
   return Boolean(config.supabase.url && config.supabase.serviceRoleKey);
@@ -51,10 +54,17 @@ async function rest(path: string, init: RequestInit = {}): Promise<unknown> {
   if (!res.ok) {
     const message = typeof body === "object" && body && "message" in body ? String((body as { message: unknown }).message) : "";
     const code = typeof body === "object" && body && "code" in body ? String((body as { code: unknown }).code) : "";
-    if (code === "PGRST205" || /relation|schema cache|could not find the (table|function)/i.test(message)) {
+    if (code === "PGRST205" || /could not find the (table|function)|schema cache/i.test(message)) {
+      if (/coupon/i.test(message)) throw new HttpError(503, "Run supabase/coupons.sql in the Supabase SQL editor.");
       throw new HttpError(503, "The store tables are missing. Run supabase/store.sql in the Supabase SQL editor.");
     }
-    if (/coming soon|left in stock|no longer available|cart is empty|Invalid quantity/i.test(message)) throw badRequest(message);
+    if (/column .*coupon_code|column .*discount_paise/i.test(message)) {
+      throw new HttpError(503, "Run supabase/coupons.sql in the Supabase SQL editor.");
+    }
+    if (/coupons_code/i.test(message)) throw badRequest("That code already exists.");
+    if (/coming soon|left in stock|no longer available|cart is empty|Invalid quantity|code isn't valid|no longer active|used up|does not change the total|at least 1 rupee|3-20 letters/i.test(message)) {
+      throw badRequest(message);
+    }
     console.error("Supabase store error:", res.status, message || text);
     throw new HttpError(502, "The store database rejected the request.");
   }
@@ -99,6 +109,8 @@ interface OrderRow {
   payment_method: PaymentMethod;
   subtotal: number;
   shipping_paise: number;
+  discount_paise?: number;
+  coupon_code?: string;
   amount: number;
   currency: string;
   notes: string;
@@ -135,6 +147,8 @@ function mapOrder(row: OrderRow): AdminOrder {
     paymentMethod: row.payment_method,
     subtotal: row.subtotal,
     shippingPaise: row.shipping_paise,
+    discountPaise: row.discount_paise ?? 0,
+    couponCode: row.coupon_code ?? "",
     amount: row.amount,
     currency: row.currency,
     notes: row.notes ?? "",
@@ -175,14 +189,27 @@ function mapOrder(row: OrderRow): AdminOrder {
   };
 }
 
+async function fetchOrders(query: string): Promise<OrderRow[]> {
+  const load = (select: string) => rest(`orders?${query}&select=${select}`);
+  try {
+    return asArray<OrderRow>(await load(orderSelect));
+  } catch (err) {
+    if (orderSelect !== ORDER_SELECT_PLAIN && err instanceof HttpError && err.message.includes("coupons.sql")) {
+      orderSelect = ORDER_SELECT_PLAIN;
+      return asArray<OrderRow>(await load(orderSelect));
+    }
+    throw err;
+  }
+}
+
 async function getOrderBy(filter: string): Promise<AdminOrder | undefined> {
-  const rows = asArray<OrderRow>(await rest(`orders?${filter}&select=${ORDER_SELECT}&limit=1`));
+  const rows = await fetchOrders(`${filter}&limit=1`);
   return rows[0] ? mapOrder(rows[0]) : undefined;
 }
 
 async function listOrders(status?: string): Promise<AdminOrder[]> {
   const filter = status ? `status=eq.${encodeURIComponent(status)}&` : "";
-  const rows = asArray<OrderRow>(await rest(`orders?${filter}select=${ORDER_SELECT}&order=id.desc&limit=200`));
+  const rows = await fetchOrders(`${filter}order=id.desc&limit=200`);
   return rows.map(mapOrder);
 }
 
@@ -196,6 +223,8 @@ function summary(order: AdminOrder) {
     paymentMethod: order.paymentMethod,
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     amount: order.amount,
     currency: order.currency,
     customerName: order.customer.name,
@@ -216,6 +245,8 @@ function tracked(order: AdminOrder) {
     items: view.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
     subtotal: view.subtotal,
     shippingPaise: view.shippingPaise,
+    discountPaise: view.discountPaise,
+    couponCode: view.couponCode,
     amount: view.amount,
     currency: view.currency,
     paymentMethod: view.paymentMethod,
@@ -245,6 +276,8 @@ async function notify(order: AdminOrder): Promise<void> {
     items: order.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     total: order.amount,
     method: order.paymentMethod,
     letter,
@@ -293,6 +326,8 @@ function orderPayload(order: AdminOrder): CreateOrderResponse {
     amount: order.amount,
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     currency: order.currency,
     paymentMethod: order.paymentMethod,
   };
@@ -339,6 +374,16 @@ async function markPaid(order: AdminOrder, paymentId: string, paidAmount?: numbe
 
 async function createCheckout(body: Record<string, unknown>): Promise<{ order: AdminOrder; created: boolean }> {
   const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey.trim().slice(0, 80) : "";
+  const couponCode = normalizeCouponCode(typeof body.couponCode === "string" ? body.couponCode : "");
+  if (couponCode && !isCouponCode(couponCode)) throw badRequest("Use 3-20 letters, numbers, or hyphens.");
+  if (couponCode) await rest(`coupons?code=eq.${encodeURIComponent(couponCode)}&select=id&limit=1`);
+  if (idempotencyKey) {
+    const existing = await getOrderBy(`idempotency_key=eq.${encodeURIComponent(idempotencyKey)}`);
+    if (existing && existing.status !== "failed") {
+      if (existing.couponCode === couponCode || existing.status !== "pending") return { order: existing, created: false };
+      await failOrder(existing);
+    }
+  }
   const items = await readItems(body.items);
   const customer: CustomerDetails = readCustomerDetails(body.customer);
   const method = readMethod(body.paymentMethod);
@@ -355,6 +400,7 @@ async function createCheckout(body: Record<string, unknown>): Promise<{ order: A
           shippingPaise: config.shipping.paise,
           notes,
           idempotencyKey,
+          couponCode,
           customer,
           items,
         },
@@ -370,14 +416,12 @@ async function attachRazorpay(order: AdminOrder): Promise<AdminOrder> {
   if (order.razorpayOrderId) return order;
   try {
     const rzp = await createRazorpayOrder(order.amount, order.publicId.slice(0, 40));
-    const rows = asArray<OrderRow>(
-      await rest(`orders?id=eq.${order.id}&select=${ORDER_SELECT}`, {
-        method: "PATCH",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({ razorpay_order_id: rzp.id }),
-      }),
-    );
-    return rows[0] ? mapOrder(rows[0]) : { ...order, razorpayOrderId: rzp.id };
+    await rest(`orders?id=eq.${order.id}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ razorpay_order_id: rzp.id }),
+    });
+    return (await getOrderBy(`id=eq.${order.id}`)) ?? { ...order, razorpayOrderId: rzp.id };
   } catch (err) {
     await failOrder(order);
     throw err;
@@ -457,6 +501,97 @@ async function saveShipment(order: AdminOrder, body: Record<string, unknown>): P
   }
 }
 
+interface HostedCouponRow {
+  id: number;
+  code: string;
+  kind: string;
+  value: number;
+  max_uses: number;
+  used: number;
+  active: boolean;
+  created_at: string;
+}
+
+function mapCoupon(row: HostedCouponRow): Coupon {
+  return {
+    id: Number(row.id),
+    code: row.code,
+    kind: row.kind === "percent" ? "percent" : "flat",
+    value: Number(row.value),
+    maxUses: Number(row.max_uses),
+    used: Number(row.used),
+    active: row.active === true,
+    createdAt: row.created_at,
+  };
+}
+
+async function listHostedCoupons(): Promise<Coupon[]> {
+  const rows = asArray<HostedCouponRow>(await rest("coupons?select=*&order=id.desc"));
+  return rows.map(mapCoupon);
+}
+
+async function createHostedCoupon(body: Record<string, unknown>): Promise<Coupon> {
+  const kind = body.kind === "percent" || body.kind === "flat" ? body.kind : "";
+  const value = int(body.value, kind === "percent" ? "Percent" : "Discount", { min: 1, max: 10_000_000 });
+  const problem = couponOfferError(kind, value);
+  if (problem) throw badRequest(problem);
+  const maxUses = int(body.maxUses, "Number of uses", { min: 1, max: 100_000 });
+  const requested = typeof body.code === "string" ? body.code : "";
+  const code = requested.trim() ? normalizeCouponCode(requested) : await unusedHostedCode();
+  if (!isCouponCode(code)) throw badRequest("Use 3-20 letters, numbers, or hyphens.");
+  try {
+    const rows = asArray<HostedCouponRow>(
+      await rest("coupons", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ code, kind, value, max_uses: maxUses, active: true }),
+      }),
+    );
+    if (!rows[0]) throw new HttpError(502, "The coupon was saved but could not be read back.");
+    return mapCoupon(rows[0]);
+  } catch (err) {
+    if (err instanceof HttpError && /coupons_code|duplicate key/i.test(err.message)) throw badRequest("That code already exists.");
+    throw err;
+  }
+}
+
+async function unusedHostedCode(): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const code = generateCouponCode();
+    const rows = asArray<{ id: number }>(await rest(`coupons?code=eq.${code}&select=id&limit=1`));
+    if (rows.length === 0) return code;
+  }
+  throw badRequest("Could not generate a code. Try again.");
+}
+
+async function quoteHostedCoupon(codeRaw: unknown, itemBody: unknown): Promise<CouponQuote> {
+  const code = normalizeCouponCode(typeof codeRaw === "string" ? codeRaw : "");
+  if (!code) throw badRequest("Enter a code.");
+  if (!isCouponCode(code)) throw badRequest("Use 3-20 letters, numbers, or hyphens.");
+  const items = await readItems(itemBody);
+  let subtotal = 0;
+  for (const item of items) {
+    const rows = asArray<{ price: number; stock: number; name: string; active: boolean }>(
+      await rest(`products?id=eq.${item.productId}&select=price,stock,name,active`),
+    );
+    const product = rows[0];
+    if (!product || product.active === false) throw badRequest("An item in your cart is no longer available.");
+    if (Number(product.stock) < item.quantity) {
+      throw badRequest(Number(product.stock) === 0 ? `${product.name} is coming soon.` : `Only ${product.stock} of ${product.name} left in stock.`);
+    }
+    subtotal += Number(product.price) * item.quantity;
+  }
+  const rows = asArray<HostedCouponRow>(await rest(`coupons?code=eq.${encodeURIComponent(code)}&select=*&limit=1`));
+  const coupon = rows[0] ? mapCoupon(rows[0]) : undefined;
+  if (!coupon) throw badRequest("That code isn't valid.");
+  if (!coupon.active) throw badRequest("That code is no longer active.");
+  if (coupon.used >= coupon.maxUses) throw badRequest("This code has been used up.");
+  const discountPaise = payableDiscount(subtotal, config.shipping.paise, couponDiscount(subtotal, coupon.kind, coupon.value));
+  if (discountPaise < 1) throw badRequest("This code does not change the total.");
+  const priced = quote([{ unitPrice: subtotal, quantity: 1 }], config.shipping.paise, discountPaise);
+  return { code, kind: coupon.kind, discountPaise, subtotal, shippingPaise: config.shipping.paise, total: priced.total };
+}
+
 export async function handlePublicStore(req: Request, path: string): Promise<Response | null> {
   const storePath =
     path === "/api/products" ||
@@ -486,6 +621,11 @@ export async function handlePublicStore(req: Request, path: string): Promise<Res
       supportEmail: config.supportEmail,
     };
     return json(200, body);
+  }
+
+  if (req.method === "POST" && path === "/api/checkout/coupon") {
+    const body = (await req.json()) as { code?: unknown; items?: unknown };
+    return json(200, await quoteHostedCoupon(body.code, body.items));
   }
 
   if (req.method === "POST" && path === "/api/checkout/order") {
@@ -580,7 +720,11 @@ export async function handlePublicStore(req: Request, path: string): Promise<Res
 }
 
 export async function handleAdminStore(req: Request, path: string): Promise<Response | null> {
-  const adminPath = path === "/api/admin/stats" || path.startsWith("/api/admin/orders") || path.startsWith("/api/admin/products");
+  const adminPath =
+    path === "/api/admin/stats" ||
+    path.startsWith("/api/admin/orders") ||
+    path.startsWith("/api/admin/products") ||
+    path.startsWith("/api/admin/coupons");
   if (!adminPath) return null;
   if (!supabaseStoreConfigured()) return missing();
 
@@ -650,6 +794,8 @@ export async function handleAdminStore(req: Request, path: string): Promise<Resp
         items: order.items,
         subtotal: order.subtotal,
         shippingPaise: order.shippingPaise,
+        discountPaise: order.discountPaise,
+        couponCode: order.couponCode,
         total: order.amount,
         method: order.paymentMethod,
         letter,
@@ -730,6 +876,23 @@ export async function handleAdminStore(req: Request, path: string): Promise<Resp
     return json(200, { ok: true });
   }
   if (path.includes("/images")) return json(400, { error: "Image upload needs the local server. Set image URLs in Supabase for now." });
+
+  if (req.method === "GET" && path === "/api/admin/coupons") return json(200, await listHostedCoupons());
+  if (req.method === "POST" && path === "/api/admin/coupons") return json(201, await createHostedCoupon((await req.json()) as Record<string, unknown>));
+  const coupon = path.match(/^\/api\/admin\/coupons\/(\d+)$/);
+  if (coupon && req.method === "PATCH") {
+    const body = (await req.json()) as { active?: unknown };
+    if (typeof body.active !== "boolean") throw badRequest("Say whether the code is active.");
+    const rows = asArray<HostedCouponRow>(
+      await rest(`coupons?id=eq.${coupon[1]}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ active: body.active }),
+      }),
+    );
+    if (!rows[0]) throw notFound("Coupon not found.");
+    return json(200, mapCoupon(rows[0]));
+  }
 
   return json(404, { error: "Not found." });
 }

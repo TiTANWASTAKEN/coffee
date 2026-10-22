@@ -7,6 +7,7 @@ import { FULFILLMENT_STATES, fulfillmentLabel, type AdminStats, type Fulfillment
 import { checkCredentials, endSession, loginRateLimit, requireAdmin, resetLoginAttempts, sessionEmail, startSession } from "../auth";
 import { canChangeFulfillment, canRefund } from "../commerce";
 import { config } from "../config";
+import { createCoupon, listCoupons, setCouponActive } from "../coupons";
 import { addOrderUpdate, db, getOrder, getProductById, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock } from "../db";
 import { badRequest, HttpError, idParam, int, notFound, str } from "../http";
 import { notifyOrderOnce, resendOrderEmail } from "../notify";
@@ -300,6 +301,19 @@ adminRouter.post("/products/:id/images", upload.array("images", MAX_IMAGES), asy
 
   db.prepare("UPDATE products SET images = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify([...existing.images, ...urls]), id);
   res.status(201).json(getProductById(id));
+});
+
+adminRouter.get("/coupons", (_req, res) => {
+  res.json(listCoupons());
+});
+
+adminRouter.post("/coupons", (req, res) => {
+  res.status(201).json(createCoupon(req.body ?? {}));
+});
+
+adminRouter.patch("/coupons/:id", (req, res) => {
+  if (typeof req.body?.active !== "boolean") throw badRequest("Say whether the code is active.");
+  res.json(setCouponActive(idParam(req.params.id), req.body.active));
 });
 
 async function removeFiles(urls: string[]): Promise<void> {

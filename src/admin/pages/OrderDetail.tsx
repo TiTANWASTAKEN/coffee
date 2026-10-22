@@ -136,6 +136,7 @@ export default function OrderDetail() {
               <Detail label="Status" value={<Badge value={order.status} />} />
               <Detail label="Subtotal" value={formatPrice(order.subtotal)} />
               <Detail label="Shipping" value={formatPrice(order.shippingPaise)} />
+              {order.discountPaise > 0 && <Detail label="Discount" value={`${order.couponCode ? `${order.couponCode} · ` : ""}−${formatPrice(order.discountPaise)}`} />}
               <Detail label="Paid at" value={formatDate(order.paidAt)} />
               <Detail label="UPI reference" value={order.upiReference || "—"} />
               <Detail label="Razorpay order" value={<code className="text-[0.8rem]">{order.razorpayOrderId ?? "—"}</code>} />

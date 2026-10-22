@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import express, { Router, type Request } from "express";
 import type { CheckoutConfig, CreateOrderResponse, OrderItem, PaymentMethod } from "../../shared/store";
-import { parseOrderCode, phoneMatches, quote, upiIntent } from "../commerce";
+import { normalizeCouponCode, parseOrderCode, phoneMatches, quote, upiIntent } from "../commerce";
+import { quoteCoupon } from "../coupons";
 import { config } from "../config";
 import { rememberAddress } from "../customers";
 import { currentCustomer } from "../customerSession";
@@ -67,12 +68,31 @@ function readMethod(value: unknown): PaymentMethod {
   return requested;
 }
 
+function requestedCoupon(body: unknown): string {
+  const raw = typeof body === "object" && body && "couponCode" in body ? (body as { couponCode?: unknown }).couponCode : "";
+  return normalizeCouponCode(typeof raw === "string" ? raw : "");
+}
+
+/** Drops a pending checkout so a new code can take its own use and its own stock. */
+function abandonPending(orderId: number): void {
+  db.prepare("UPDATE orders SET status = 'failed', idempotency_key = NULL WHERE id = ? AND status = 'pending'").run(orderId);
+  db.prepare("UPDATE payments SET status = 'failed' WHERE order_id = ? AND status = 'pending'").run(orderId);
+  const failed = getOrder({ id: orderId });
+  if (failed) releaseStock(failed);
+}
+
 /** Validates the cart + details and records a pending order, linked to the signed-in customer if any. */
 function createPendingOrder(req: Request) {
   const idempotencyKey = typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey.trim().slice(0, 80) : "";
+  const couponCode = requestedCoupon(req.body);
   if (idempotencyKey) {
     const existing = findIdempotentOrder(idempotencyKey);
-    if (existing && existing.status !== "failed") return { items: existing.items, publicId: existing.publicId, orderId: existing.id, reused: true as const };
+    if (existing && existing.status !== "failed") {
+      if (existing.couponCode === couponCode || existing.status !== "pending") {
+        return { items: existing.items, publicId: existing.publicId, orderId: existing.id, reused: true as const };
+      }
+      abandonPending(existing.id);
+    }
   }
 
   const items = readItems(req.body?.items);
@@ -80,6 +100,7 @@ function createPendingOrder(req: Request) {
   const method = readMethod(req.body?.paymentMethod);
   const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 500) : "";
   const priced = quote(items, config.shipping.paise);
+  const applied = couponCode ? quoteCoupon(couponCode, priced.subtotal, priced.shippingPaise) : null;
   const account = currentCustomer(req);
   const publicId = randomBytes(12).toString("base64url");
 
@@ -93,11 +114,13 @@ function createPendingOrder(req: Request) {
       paymentMethod: method,
       subtotal: priced.subtotal,
       shippingPaise: priced.shippingPaise,
+      discountPaise: applied?.discountPaise ?? 0,
+      couponCode: applied?.code ?? "",
       notes,
       idempotencyKey: idempotencyKey || null,
     });
   } catch (err) {
-    if (err instanceof Error && /stock|coming soon/.test(err.message)) throw badRequest(err.message);
+    if (err instanceof Error && /stock|coming soon|code isn't valid|no longer active|used up/.test(err.message)) throw badRequest(err.message);
     throw err;
   }
   if (account && req.body?.saveAddress === true) rememberAddress(account.id, customer);
@@ -113,6 +136,8 @@ function orderPayload(orderId: number): CreateOrderResponse {
     amount: order.amount,
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     currency: order.currency,
     paymentMethod: order.paymentMethod,
   };
@@ -154,6 +179,12 @@ storeRouter.post("/checkout/order", checkoutLimit, async (req, res) => {
     if (failed) releaseStock(failed);
     throw err;
   }
+});
+
+storeRouter.post("/checkout/coupon", checkoutLimit, (req, res) => {
+  const items = readItems(req.body?.items);
+  const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  res.json(quoteCoupon(req.body?.code, subtotal, config.shipping.paise));
 });
 
 storeRouter.get("/checkout/config", (_req, res) => {

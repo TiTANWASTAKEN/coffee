@@ -41,7 +41,7 @@ const { storeRouter, razorpayWebhook } = await import("./routes/store.ts");
 const { adminRouter } = await import("./routes/admin.ts");
 const { errorHandler } = await import("./http.ts");
 const { config } = await import("./config.ts");
-const { db, getProductBySlug } = await import("./db.ts");
+const { db, getProductBySlug, markOrderFailed } = await import("./db.ts");
 db.prepare("UPDATE products SET stock = 25, active = 1 WHERE slug IN ('honest-truth', 'bitter-truth', 'dark-truth')").run();
 const { verifyPaymentSignature } = await import("./razorpay.ts");
 const { notifyOrderOnce } = await import("./notify.ts");
@@ -335,5 +335,60 @@ describe("tracking and admin", () => {
     assert.ok(sent.some((mail) => mail.subject.startsWith("New order")));
     assert.match(customer[0].text, /cash on delivery/);
     assert.match(customer[0].text, /phone number from checkout/);
+  });
+
+  it("reserves one coupon use and gives it back when the order fails", async () => {
+    const cookie = { cookie: adminCookie() };
+    const created = await request("/api/admin/coupons", { code: "FLAT79", kind: "flat", value: 7900, maxUses: 1 }, cookie);
+    assert.equal(created.status, 201);
+
+    const preview = await request("/api/checkout/coupon", {
+      code: "flat79",
+      items: [{ productId: productId("honest-truth"), quantity: 1 }],
+    });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.total, 49900 - 7900);
+    assert.equal((db.prepare("SELECT used FROM coupons WHERE code = 'FLAT79'").get() as { used: number }).used, 0);
+
+    const before = stockOf("honest-truth");
+    const order = await checkout("honest-truth", { couponCode: "flat79" });
+    assert.equal(order.status, 201);
+    assert.equal(order.body.amount, 42000);
+    assert.equal(order.body.discountPaise, 7900);
+    assert.equal(order.body.couponCode, "FLAT79");
+    assert.equal(stockOf("honest-truth"), before - 1);
+    const used = () => (db.prepare("SELECT used FROM coupons WHERE code = 'FLAT79'").get() as { used: number }).used;
+    assert.equal(used(), 1);
+    const letter = emails.find((mail) => mail.text.includes("Discount (FLAT79)") && !mail.subject.startsWith("New order"));
+    assert.ok(letter);
+
+    const blocked = await checkout("honest-truth", { couponCode: "FLAT79" });
+    assert.equal(blocked.status, 400);
+    assert.match(String(blocked.body.error), /used up/);
+    assert.equal(stockOf("honest-truth"), before - 1);
+
+    const row = orderRow(String(order.body.orderId));
+    db.prepare("UPDATE orders SET razorpay_order_id = ? WHERE id = ?").run("order_coupon_fail", row.id);
+    markOrderFailed("order_coupon_fail");
+    assert.equal(used(), 0);
+    assert.equal(stockOf("honest-truth"), before);
+
+    const again = await checkout("honest-truth", { couponCode: "FLAT79" });
+    assert.equal(again.status, 201);
+    assert.equal(used(), 1);
+    const againRow = orderRow(String(again.body.orderId));
+    const cancelled = await fetch(base + `/api/admin/orders/${againRow.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: adminCookie() },
+      body: JSON.stringify({ fulfillment: "cancelled" }),
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(used(), 0);
+    assert.equal(stockOf("honest-truth"), before);
+
+    const unknown = await checkout("honest-truth", { couponCode: "NOPE" });
+    assert.equal(unknown.status, 400);
+    assert.match(String(unknown.body.error), /isn't valid/);
+    assert.equal(stockOf("honest-truth"), before);
   });
 });

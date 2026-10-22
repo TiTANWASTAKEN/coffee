@@ -115,6 +115,12 @@ export default function OrderConfirmation() {
                   </li>
                 ))}
               </ul>
+              {order.discountPaise > 0 && (
+                <p className="mt-4 flex justify-between text-body-sm text-muted">
+                  <span>Discount{order.couponCode ? ` (${order.couponCode})` : ""}</span>
+                  <span className="tabular-nums">−{formatPrice(order.discountPaise)}</span>
+                </p>
+              )}
               <p className="mt-5 flex items-baseline justify-between">
                 <span className="eyebrow text-muted">{order.status === "paid" ? "Total paid" : "Total"}</span>
                 <span className="font-display text-display-xs tabular-nums">{formatPrice(order.amount)}</span>

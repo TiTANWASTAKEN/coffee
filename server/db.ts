@@ -120,6 +120,8 @@ addColumn("orders", "confirmation_sent", "INTEGER NOT NULL DEFAULT 0");
 addColumn("orders", "confirmation_letter", "TEXT NOT NULL DEFAULT ''");
 addColumn("orders", "stock_held", "INTEGER NOT NULL DEFAULT 0");
 addColumn("orders", "idempotency_key", "TEXT");
+addColumn("orders", "coupon_code", "TEXT NOT NULL DEFAULT ''");
+addColumn("orders", "discount_paise", "INTEGER NOT NULL DEFAULT 0");
 db.exec(`
   UPDATE products SET sku = slug WHERE sku = '';
   UPDATE orders SET subtotal = amount WHERE subtotal = 0 AND amount > 0;
@@ -156,6 +158,17 @@ db.exec(`
     dispatched_at TEXT,
     delivered_at  TEXT,
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS coupons (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code       TEXT    NOT NULL UNIQUE,
+    kind       TEXT    NOT NULL,
+    value      INTEGER NOT NULL,
+    max_uses   INTEGER NOT NULL,
+    used       INTEGER NOT NULL DEFAULT 0,
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS admin_events (
@@ -242,6 +255,8 @@ interface OrderRow {
   payment_method: PaymentMethod;
   subtotal: number;
   shipping_paise: number;
+  discount_paise: number;
+  coupon_code: string;
   amount: number;
   currency: string;
   notes: string;
@@ -349,6 +364,8 @@ function toOrders(rows: OrderRow[]): AdminOrder[] {
     paymentMethod: row.payment_method,
     subtotal: row.subtotal,
     shippingPaise: row.shipping_paise,
+    discountPaise: row.discount_paise ?? 0,
+    couponCode: row.coupon_code ?? "",
     amount: row.amount,
     currency: row.currency,
     notes: row.notes,
@@ -401,6 +418,8 @@ export function toOrderSummary(order: AdminOrder): OrderSummary {
     paymentMethod: order.paymentMethod,
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     amount: order.amount,
     currency: order.currency,
     customerName: order.customer.name,
@@ -421,6 +440,8 @@ export function toTrackedOrder(order: AdminOrder) {
     items: summary.items.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice })),
     subtotal: summary.subtotal,
     shippingPaise: summary.shippingPaise,
+    discountPaise: summary.discountPaise,
+    couponCode: summary.couponCode,
     amount: summary.amount,
     currency: summary.currency,
     paymentMethod: summary.paymentMethod,
@@ -446,6 +467,8 @@ export interface NewOrder {
   paymentMethod: PaymentMethod;
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
+  couponCode: string;
   notes: string;
   idempotencyKey: string | null;
 }
@@ -457,8 +480,18 @@ export function findIdempotentOrder(key: string): AdminOrder | undefined {
 }
 
 export function insertOrder(input: NewOrder): number {
-  const amount = input.subtotal + input.shippingPaise;
+  const discount = Math.max(0, input.discountPaise);
+  const amount = input.subtotal - discount + input.shippingPaise;
   return transaction(() => {
+    if (input.couponCode) {
+      const reserved = db.prepare("UPDATE coupons SET used = used + 1 WHERE code = ? AND active = 1 AND used < max_uses").run(input.couponCode);
+      if (reserved.changes !== 1) {
+        const row = db.prepare("SELECT active FROM coupons WHERE code = ?").get(input.couponCode) as { active: number } | undefined;
+        if (!row) throw new Error("That code isn't valid.");
+        if (row.active !== 1) throw new Error("That code is no longer active.");
+        throw new Error("This code has been used up.");
+      }
+    }
     const reserve = db.prepare(RESERVE_STOCK_SQL);
     for (const item of input.items) {
       if (item.productId === null) throw new Error("Every new line needs a product.");
@@ -471,10 +504,10 @@ export function insertOrder(input: NewOrder): number {
     }
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO orders (public_id, customer_id, payment_method, subtotal, shipping_paise, amount, notes,
+        `INSERT INTO orders (public_id, customer_id, payment_method, subtotal, shipping_paise, discount_paise, coupon_code, amount, notes,
            idempotency_key, stock_held, customer_name, customer_email, customer_phone,
            address_line1, address_line2, city, state, postal_code)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.publicId,
@@ -482,6 +515,8 @@ export function insertOrder(input: NewOrder): number {
         input.paymentMethod,
         input.subtotal,
         input.shippingPaise,
+        discount,
+        input.couponCode,
         amount,
         input.notes,
         input.idempotencyKey,
@@ -506,6 +541,7 @@ export function releaseStock(order: AdminOrder): void {
   if (!order.stockHeld) return;
   const release = db.prepare(RELEASE_STOCK_SQL);
   for (const item of order.items) if (item.productId !== null) release.run(item.quantity, item.productId);
+  if (order.couponCode) db.prepare("UPDATE coupons SET used = MAX(used - 1, 0) WHERE code = ?").run(order.couponCode);
   db.prepare("UPDATE orders SET stock_held = 0 WHERE id = ?").run(order.id);
 }
 

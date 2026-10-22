@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Lock } from "lucide-react";
-import type { CheckoutConfig, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
+import type { CheckoutConfig, CouponQuote, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
 import { accountsEnabled } from "@/config/features";
 import { site } from "@/config/site";
 import { getProduct } from "@/data/products";
@@ -52,6 +52,10 @@ export default function Checkout() {
   const { loading: accountLoading, customer } = useAccount();
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   const [saveAddress, setSaveAddress] = useState(true);
+  const [couponCode, setCouponCode] = useState("");
+  const [applied, setApplied] = useState<CouponQuote | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     sessionStorage.setItem(DETAILS_KEY, JSON.stringify(details));
@@ -68,6 +72,8 @@ export default function Checkout() {
 
   const cartKey = cart.lines.map((line) => `${line.product.id}:${line.quantity}`).join(",");
   useEffect(() => {
+    setApplied(null);
+    setCouponError(null);
     if (!cartKey) return;
     sessionStorage.setItem("ht-idem", crypto.randomUUID());
   }, [cartKey]);
@@ -99,6 +105,26 @@ export default function Checkout() {
 
   const set = (field: keyof CustomerDetails) => (value: string) => setDetails((d) => ({ ...d, [field]: value }));
   const busy = phase !== "idle";
+  const shippingPaise = checkout?.shippingPaise ?? 0;
+  const totalPaise = applied?.total ?? cart.subtotal + shippingPaise;
+
+  async function applyCoupon() {
+    setCouponError(null);
+    setApplying(true);
+    try {
+      const quote = await api<CouponQuote>("/checkout/coupon", {
+        method: "POST",
+        body: { code: couponCode, items: cart.lines.map((line) => ({ productId: line.product.id, quantity: line.quantity })) },
+      });
+      setApplied(quote);
+      setCouponCode(quote.code);
+    } catch (err) {
+      setApplied(null);
+      setCouponError(errorMessage(err));
+    } finally {
+      setApplying(false);
+    }
+  }
 
   const matchesDetails = (a: SavedAddress) =>
     (Object.keys(addressFields(a)) as (keyof ReturnType<typeof addressFields>)[]).every(
@@ -141,6 +167,7 @@ export default function Checkout() {
       saveAddress: Boolean(customer) && saveAddress && !addresses.some(matchesDetails),
       paymentMethod: method,
       idempotencyKey: sessionStorage.getItem("ht-idem") ?? crypto.randomUUID(),
+      ...(applied ? { couponCode: applied.code } : {}),
     };
     const simulated = ((e.nativeEvent as SubmitEvent).submitter as HTMLElement | null)?.dataset.simulate;
     if (simulated === "success" || simulated === "failure") return simulate(request, simulated);
@@ -340,21 +367,58 @@ export default function Checkout() {
                 </div>
               </fieldset>
 
+              <div className="mt-5 border-t border-line pt-5">
+                <label className="flex flex-col gap-2">
+                  <span className="eyebrow text-muted">Coupon</span>
+                  <span className="flex gap-3">
+                    <input
+                      value={couponCode}
+                      onChange={(e) => {
+                        setCouponCode(e.target.value.toUpperCase());
+                        setApplied(null);
+                        setCouponError(null);
+                      }}
+                      aria-label="Coupon code"
+                      autoCapitalize="characters"
+                      maxLength={20}
+                      disabled={busy}
+                      className="min-h-11 min-w-0 flex-1 border-b border-line-strong bg-transparent uppercase tracking-[0.14em] text-ivory focus:border-ivory focus:outline-none"
+                    />
+                    <Button type="button" variant="outline" size="sm" disabled={busy || applying || !couponCode.trim()} onClick={() => void applyCoupon()}>
+                      {applying ? "Checking…" : "Apply"}
+                    </Button>
+                  </span>
+                </label>
+                {couponError && (
+                  <p role="alert" className="mt-3 text-body-sm text-ivory">
+                    {couponError}
+                  </p>
+                )}
+              </div>
+
               <dl className="mt-5 flex flex-col gap-2 text-body-sm">
                 <div className="flex justify-between text-muted">
                   <dt>Subtotal</dt>
                   <dd className="tabular-nums">{formatPrice(cart.subtotal)}</dd>
                 </div>
-                <div className="flex justify-between text-muted">
-                  <dt>Shipping</dt>
-                  <dd className="tabular-nums">
-                    {formatPrice(checkout?.shippingPaise ?? 0)}
-                    {checkout && !checkout.shippingConfigured ? " (not configured)" : ""}
-                  </dd>
-                </div>
+                {(checkout?.shippingPaise ?? 0) > 0 || (checkout && !checkout.shippingConfigured) ? (
+                  <div className="flex justify-between text-muted">
+                    <dt>Shipping</dt>
+                    <dd className="tabular-nums">
+                      {formatPrice(shippingPaise)}
+                      {checkout && !checkout.shippingConfigured ? " (not configured)" : ""}
+                    </dd>
+                  </div>
+                ) : null}
+                {applied && applied.discountPaise > 0 ? (
+                  <div className="flex justify-between text-muted">
+                    <dt>Discount ({applied.code})</dt>
+                    <dd className="tabular-nums">−{formatPrice(applied.discountPaise)}</dd>
+                  </div>
+                ) : null}
                 <div className="mt-2 flex items-baseline justify-between border-t border-line pt-4">
                   <dt className="eyebrow text-muted">Total</dt>
-                  <dd className="font-display text-display-xs tabular-nums">{formatPrice(cart.subtotal + (checkout?.shippingPaise ?? 0))}</dd>
+                  <dd className="font-display text-display-xs tabular-nums">{formatPrice(totalPaise)}</dd>
                 </div>
               </dl>
 
@@ -365,7 +429,7 @@ export default function Checkout() {
               )}
 
               <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy || !cart.ready || checkout?.methods.length === 0} cursor="Pay">
-                {phase === "creating" ? "Placing order…" : phase === "paying" ? "Complete payment in the window" : method === "razorpay" ? `Pay ${formatPrice(cart.subtotal + (checkout?.shippingPaise ?? 0))}` : "Place order"}
+                {phase === "creating" ? "Placing order…" : phase === "paying" ? "Complete payment in the window" : method === "razorpay" ? `Pay ${formatPrice(totalPaise)}` : "Place order"}
               </Button>
               <p className="mt-4 flex items-center justify-center gap-2 text-body-sm text-faint">
                 <Lock aria-hidden="true" strokeWidth={1.5} className="size-3.5" />

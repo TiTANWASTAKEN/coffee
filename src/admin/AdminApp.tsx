@@ -10,6 +10,7 @@ import Orders from "./pages/Orders";
 import OrderDetail from "./pages/OrderDetail";
 import Products from "./pages/Products";
 import ProductEdit from "./pages/ProductEdit";
+import Coupons from "./pages/Coupons";
 import Waitlist from "./pages/Waitlist";
 
 export default function AdminApp() {
@@ -52,6 +53,7 @@ function AdminRoutes() {
         <Route path="/admin/products" element={<Products />} />
         <Route path="/admin/products/new" element={<ProductEdit />} />
         <Route path="/admin/products/:id" element={<ProductEdit />} />
+        <Route path="/admin/coupons" element={<Coupons />} />
       </Route>
       <Route path="*" element={<Navigate to="/admin" replace />} />
     </Routes>

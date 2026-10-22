@@ -46,6 +46,30 @@ export interface CustomerDetails {
 
 export type PaymentMethod = "razorpay" | "cod" | "upi";
 
+export type CouponKind = "flat" | "percent";
+
+export interface Coupon {
+  id: number;
+  code: string;
+  kind: CouponKind;
+  /** Flat: paise off the coffee. Percent: 1–100. */
+  value: number;
+  maxUses: number;
+  used: number;
+  active: boolean;
+  createdAt: string;
+}
+
+/** A code the server priced. The browser never chooses the discount. */
+export interface CouponQuote {
+  code: string;
+  kind: CouponKind;
+  discountPaise: number;
+  subtotal: number;
+  shippingPaise: number;
+  total: number;
+}
+
 export interface CreateOrderRequest {
   items: CheckoutItem[];
   customer: CustomerDetails;
@@ -55,6 +79,8 @@ export interface CreateOrderRequest {
   notes?: string;
   /** Same key on a retry returns the original order instead of creating another. */
   idempotencyKey?: string;
+  /** Re-checked on the server. An unknown, off, or used-up code is refused. */
+  couponCode?: string;
 }
 
 export interface CheckoutConfig {
@@ -73,6 +99,8 @@ export interface CreateOrderResponse {
   amount: number;
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
+  couponCode: string;
   currency: string;
   paymentMethod: PaymentMethod;
   razorpayOrderId?: string;
@@ -150,6 +178,8 @@ export interface OrderSummary {
   paymentMethod: PaymentMethod;
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
+  couponCode: string;
   amount: number;
   currency: string;
   customerName: string;
@@ -170,6 +200,8 @@ export interface AdminOrder {
   paymentMethod: PaymentMethod;
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
+  couponCode: string;
   amount: number;
   currency: string;
   notes: string;
@@ -194,6 +226,8 @@ export interface TrackedOrder {
   items: Pick<OrderItem, "name" | "quantity" | "unitPrice">[];
   subtotal: number;
   shippingPaise: number;
+  discountPaise: number;
+  couponCode: string;
   amount: number;
   currency: string;
   paymentMethod: PaymentMethod;

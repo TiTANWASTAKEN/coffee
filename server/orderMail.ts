@@ -11,6 +11,8 @@ export interface OrderMail {
   items: { name: string; quantity: number; unitPrice: number }[];
   subtotal: number;
   shippingPaise: number;
+  discountPaise?: number;
+  couponCode?: string;
   total: number;
   method: PaymentMethod;
   letter: OrderLetter;
@@ -40,6 +42,8 @@ export async function deliverOrderMail(order: OrderMail): Promise<boolean> {
     items: order.items,
     subtotal: order.subtotal,
     shippingPaise: order.shippingPaise,
+    discountPaise: order.discountPaise,
+    couponCode: order.couponCode,
     total: order.total,
     method: order.method,
     letter: order.letter,

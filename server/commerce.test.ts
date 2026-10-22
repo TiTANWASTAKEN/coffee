@@ -26,6 +26,18 @@ describe("quote", () => {
     assert.equal(priced.subtotal, 144700);
     assert.equal(priced.shippingPaise, 5000);
     assert.equal(priced.total, 149700);
+    assert.equal(priced.discountPaise, 0);
+  });
+
+  it("takes the discount off the coffee and keeps at least ₹1 payable", () => {
+    const percent = quote([{ unitPrice: 44900, quantity: 1 }], 9000, 4490);
+    assert.equal(percent.discountPaise, 4490);
+    assert.equal(percent.shippingPaise, 9000);
+    assert.equal(percent.total, 49410);
+
+    const capped = quote([{ unitPrice: 200, quantity: 1 }], 0, 200);
+    assert.equal(capped.discountPaise, 100);
+    assert.equal(capped.total, 100);
   });
 
   it("rejects an empty cart and a negative shipping charge", () => {
