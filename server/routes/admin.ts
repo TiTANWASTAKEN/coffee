@@ -8,9 +8,10 @@ import { checkCredentials, endSession, loginRateLimit, requireAdmin, resetLoginA
 import { canChangeFulfillment, canRefund } from "../commerce";
 import { config } from "../config";
 import { createCoupon, listCoupons, setCouponActive } from "../coupons";
-import { addOrderUpdate, db, getOrder, getProductById, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock } from "../db";
+import { addOrderUpdate, db, deleteUnpaidCheckouts, getOrder, getProductById, getReminderTemplate, listOrders, listProducts, markOrderPaidById, recordAdminEvent, releaseStock, saveReminderTemplate } from "../db";
 import { badRequest, HttpError, idParam, int, notFound, str } from "../http";
 import { notifyOrderOnce, resendOrderEmail } from "../notify";
+import { readOrderIds, readReminderTemplate, sendPaymentReminders } from "../reminder";
 import { WaitlistStorageError } from "../supabaseWaitlist";
 import { loadWaitlist } from "../waitlistStore";
 
@@ -84,6 +85,33 @@ adminRouter.get("/orders", (req, res) => {
   const status = req.query.status as PaymentStatus | undefined;
   if (status && !PAYMENT_STATES.includes(status)) throw badRequest("Unknown status.");
   res.json(listOrders({ status }));
+});
+
+adminRouter.get("/settings/payment-reminder", (_req, res) => {
+  res.json({ ...getReminderTemplate(), needsSetup: false });
+});
+
+adminRouter.put("/settings/payment-reminder", (req, res) => {
+  const template = readReminderTemplate(req.body);
+  saveReminderTemplate(template.subject, template.body);
+  res.json({ ...template, needsSetup: false });
+});
+
+adminRouter.post("/orders/remind", async (req, res) => {
+  const ids = readOrderIds(req.body);
+  const orders = ids.map((id) => getOrder({ id })).filter((order) => order !== undefined);
+  const result = await sendPaymentReminders(orders, getReminderTemplate(), (order) => recordAdminEvent(order.id, "payment_reminder", order.customer.email));
+  result.skipped += ids.length - orders.length;
+  if (result.sent === 0 && result.failed > 0) throw new HttpError(502, "The email provider did not accept the message.");
+  if (result.sent === 0) throw badRequest("Only an unpaid online checkout can be reminded.");
+  res.json(result);
+});
+
+adminRouter.post("/orders/delete-unpaid", (req, res) => {
+  const ids = readOrderIds(req.body);
+  const result = deleteUnpaidCheckouts(ids);
+  if (result.deleted === 0) throw badRequest("Only an unpaid online checkout can be deleted.");
+  res.json(result);
 });
 
 adminRouter.get("/orders/:id", (req, res) => {

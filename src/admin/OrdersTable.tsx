@@ -1,9 +1,18 @@
 import { Link, useNavigate } from "react-router";
 import type { AdminOrder } from "@shared/store";
+import { canClearUnpaidCheckout } from "@shared/reminder";
 import { formatDate, formatPrice } from "@/lib/format";
 import { Badge } from "./ui";
 
-export function OrdersTable({ orders }: { orders: AdminOrder[] }) {
+export function OrdersTable({
+  orders,
+  selected,
+  onToggle,
+}: {
+  orders: AdminOrder[];
+  selected?: number[];
+  onToggle?: (id: number) => void;
+}) {
   const navigate = useNavigate();
   if (orders.length === 0) return <p className="py-6 text-body-sm text-muted">No orders yet.</p>;
 
@@ -12,6 +21,7 @@ export function OrdersTable({ orders }: { orders: AdminOrder[] }) {
       <table className="w-full min-w-[44rem] text-left text-body-sm">
         <thead className="text-[0.75rem] uppercase tracking-wider text-faint">
           <tr className="border-b border-line">
+            {onToggle && <th className="w-10 px-5 py-2.5" />}
             <th className="px-5 py-2.5 font-medium">Order</th>
             <th className="px-3 py-2.5 font-medium">Date</th>
             <th className="px-3 py-2.5 font-medium">Customer</th>
@@ -28,6 +38,18 @@ export function OrdersTable({ orders }: { orders: AdminOrder[] }) {
               onClick={() => navigate(`/admin/orders/${o.id}`)}
               className="cursor-pointer border-b border-line last:border-0 hover:bg-surface-raised"
             >
+              {onToggle && (
+                <td className="px-5 py-3" onClick={(e) => e.stopPropagation()}>
+                  {canClearUnpaidCheckout(o) && (
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${o.code}`}
+                      checked={selected?.includes(o.id) ?? false}
+                      onChange={() => onToggle(o.id)}
+                    />
+                  )}
+                </td>
+              )}
               <td className="px-5 py-3">
                 <Link to={`/admin/orders/${o.id}`} className="font-medium hover:underline" onClick={(e) => e.stopPropagation()}>
                   {o.code}

@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { shippingForQuantity } from "../shared/shipping.ts";
 import { isEmail } from "../shared/email.ts";
+import { canClearUnpaidCheckout, renderReminder } from "../shared/reminder.ts";
 import {
   RESERVE_STOCK_SQL,
   canChangeFulfillment,
@@ -24,6 +25,16 @@ describe("email", () => {
     assert.equal(isEmail("name@iitb.ac.in"), true);
     assert.equal(isEmail("not-an-email"), false);
     assert.equal(isEmail("a@b"), false);
+  });
+});
+
+describe("payment reminder", () => {
+  it("fills the admin wording and only matches an unpaid online checkout", () => {
+    assert.equal(renderReminder("Hi {name}, {order} is {total}", { name: "Asha", order: "BT-0004", items: "", total: "₹499", shop: "" }), "Hi Asha, BT-0004 is ₹499");
+    assert.equal(canClearUnpaidCheckout({ status: "pending", paymentMethod: "razorpay", razorpayPaymentId: null }), true);
+    assert.equal(canClearUnpaidCheckout({ status: "pending", paymentMethod: "cod", razorpayPaymentId: null }), false);
+    assert.equal(canClearUnpaidCheckout({ status: "pending", paymentMethod: "razorpay", razorpayPaymentId: "pay_1" }), false);
+    assert.equal(canClearUnpaidCheckout({ status: "paid", paymentMethod: "razorpay", razorpayPaymentId: null }), false);
   });
 });
 

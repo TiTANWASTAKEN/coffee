@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import type { AdminOrder, CustomerDetails, Fulfillment, OrderItem, OrderSummary, PaymentMethod, PaymentStatus, ShipmentInfo, StoreProduct, TrackingUpdate } from "../shared/store";
+import { canClearUnpaidCheckout, defaultReminder } from "../shared/reminder.ts";
 import { formatOrderCode, RELEASE_STOCK_SQL, RESERVE_STOCK_SQL } from "./commerce";
 import { config } from "./config";
 
@@ -177,6 +178,11 @@ db.exec(`
     action     TEXT    NOT NULL,
     detail     TEXT    NOT NULL DEFAULT '',
     created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS shop_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   );
 `);
 
@@ -590,6 +596,47 @@ export function markOrderPaidById(orderId: number, reference: string): AdminOrde
     db.prepare("UPDATE payments SET status = 'paid', provider_payment_id = ? WHERE order_id = ? AND status = 'pending'").run(reference, order.id);
     return getOrder({ id: order.id });
   });
+}
+
+export function getReminderTemplate(): { subject: string; body: string } {
+  const read = (key: string, fallback: string) => {
+    const row = db.prepare("SELECT value FROM shop_settings WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value || fallback;
+  };
+  return {
+    subject: read("payment_reminder_subject", defaultReminder.subject),
+    body: read("payment_reminder_body", defaultReminder.body),
+  };
+}
+
+export function saveReminderTemplate(subject: string, body: string): void {
+  const save = db.prepare("INSERT INTO shop_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+  save.run("payment_reminder_subject", subject);
+  save.run("payment_reminder_body", body);
+}
+
+/** Releases stock and coupon use, then removes the order. Paid orders are left alone. */
+export function deleteUnpaidCheckouts(ids: number[]): { deleted: number; skipped: number } {
+  let deleted = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const code = transaction(() => {
+      const order = getOrder({ id });
+      if (!order || !canClearUnpaidCheckout(order)) return "";
+      releaseStock(order);
+      const result = db
+        .prepare(
+          "DELETE FROM orders WHERE id = ? AND status = 'pending' AND payment_method = 'razorpay' AND (razorpay_payment_id IS NULL OR razorpay_payment_id = '')",
+        )
+        .run(id);
+      return result.changes === 1 ? order.code : "";
+    });
+    if (code) {
+      deleted += 1;
+      recordAdminEvent(null, "delete_unpaid", code);
+    } else skipped += 1;
+  }
+  return { deleted, skipped };
 }
 
 export function markOrderFailed(razorpayOrderId: string): void {

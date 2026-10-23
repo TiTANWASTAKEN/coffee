@@ -15,7 +15,6 @@ process.env.RESEND_API_KEY = "re_test_not_real";
 process.env.EMAIL_FROM = "orders@example.com";
 process.env.COD_ENABLED = "true";
 process.env.SHIPPING_PAISE = "0";
-process.env.NCR_ONLY = "true";
 process.env.SITE_VERSION = "v2";
 process.env.ADMIN_EMAIL = "owner@example.com";
 process.env.ADMIN_NOTIFY_EMAIL = "";
@@ -41,7 +40,7 @@ const { storeRouter, razorpayWebhook } = await import("./routes/store.ts");
 const { adminRouter } = await import("./routes/admin.ts");
 const { errorHandler } = await import("./http.ts");
 const { config } = await import("./config.ts");
-const { db, getProductBySlug, markOrderFailed } = await import("./db.ts");
+const { db, getOrder, getProductBySlug, insertOrder, markOrderFailed } = await import("./db.ts");
 db.prepare("UPDATE products SET stock = 25, active = 1 WHERE slug IN ('honest-truth', 'bitter-truth', 'dark-truth')").run();
 const { verifyPaymentSignature } = await import("./razorpay.ts");
 const { notifyOrderOnce } = await import("./notify.ts");
@@ -135,14 +134,13 @@ describe("checkout", () => {
     assert.equal(item.unit_price, 49900);
   });
 
-  it("refuses a PIN code outside the delivery area without taking stock", async () => {
+  it("accepts a PIN code anywhere in India", async () => {
     const before = stockOf("dark-truth");
-    const res = await checkout("dark-truth", {
+    const ok = await checkout("dark-truth", {
       customer: { ...customer, city: "Bengaluru", state: "Karnataka", postalCode: "560001" },
     });
-    assert.equal(res.status, 400);
-    assert.equal(res.body.error, "We can't deliver to this PIN code yet.");
-    assert.equal(stockOf("dark-truth"), before);
+    assert.equal(ok.status, 201);
+    assert.equal(stockOf("dark-truth"), before - 1);
   });
 
   it("rejects an inactive product and an out-of-stock product", async () => {
@@ -390,5 +388,92 @@ describe("tracking and admin", () => {
     assert.equal(unknown.status, 400);
     assert.match(String(unknown.body.error), /isn't valid/);
     assert.equal(stockOf("honest-truth"), before);
+  });
+
+  it("reminds an unpaid online checkout and deletes it, and leaves cash on delivery alone", async () => {
+    const before = stockOf("dark-truth");
+    const unpaid = insertOrder({
+      publicId: "unpaid-reminder",
+      customer,
+      items: [{ productId: productId("dark-truth"), name: "Dark Truth", unitPrice: 44900, quantity: 1 }],
+      customerId: null,
+      paymentMethod: "razorpay",
+      subtotal: 44900,
+      shippingPaise: 0,
+      discountPaise: 0,
+      couponCode: "",
+      notes: "",
+      idempotencyKey: "unpaid-reminder",
+    });
+    assert.equal(stockOf("dark-truth"), before - 1);
+    const cookie = adminCookie();
+    const saved = await fetch(base + "/api/admin/settings/payment-reminder", {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ subject: "Finish {order}", body: "Hi {name}\n{items}\n{total}\n{shop}" }),
+    });
+    assert.equal(saved.status, 200);
+
+    db.prepare("UPDATE orders SET razorpay_payment_id = 'pay_started' WHERE id = ?").run(unpaid);
+    const blocked = await fetch(base + "/api/admin/orders/delete-unpaid", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ ids: [unpaid] }),
+    });
+    assert.equal(blocked.status, 400);
+    assert.equal(stockOf("dark-truth"), before - 1);
+    db.prepare("UPDATE orders SET razorpay_payment_id = NULL WHERE id = ?").run(unpaid);
+
+    const reminded = await fetch(base + "/api/admin/orders/remind", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ ids: [unpaid] }),
+    });
+    assert.equal(reminded.status, 200);
+    assert.equal(((await reminded.json()) as { sent: number }).sent, 1);
+    const mail = emails.at(-1);
+    assert.equal(mail?.to, customer.email);
+    assert.match(mail?.subject ?? "", /BT-/);
+    assert.match(mail?.text ?? "", /Asha Rao/);
+    assert.match(mail?.text ?? "", /Dark Truth × 1/);
+
+    const cod = insertOrder({
+      publicId: "cod-keep",
+      customer,
+      items: [{ productId: productId("dark-truth"), name: "Dark Truth", unitPrice: 44900, quantity: 1 }],
+      customerId: null,
+      paymentMethod: "cod",
+      subtotal: 44900,
+      shippingPaise: 0,
+      discountPaise: 0,
+      couponCode: "",
+      notes: "",
+      idempotencyKey: "cod-keep",
+    });
+    const kept = await fetch(base + "/api/admin/orders/delete-unpaid", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ ids: [cod] }),
+    });
+    assert.equal(kept.status, 400);
+    assert.ok(getOrder({ id: cod }));
+
+    const removed = await fetch(base + "/api/admin/orders/delete-unpaid", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ ids: [unpaid] }),
+    });
+    assert.equal(removed.status, 200);
+    assert.equal(((await removed.json()) as { deleted: number }).deleted, 1);
+    assert.equal(getOrder({ id: unpaid }), undefined);
+    assert.equal(stockOf("dark-truth"), before - 1);
+
+    const cancelled = await fetch(base + `/api/admin/orders/${cod}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ fulfillment: "cancelled" }),
+    });
+    assert.equal(cancelled.status, 200);
+    assert.equal(stockOf("dark-truth"), before);
   });
 });

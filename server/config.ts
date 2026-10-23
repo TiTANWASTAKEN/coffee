@@ -65,8 +65,6 @@ export const config = {
     keySecret: process.env.RAZORPAY_KEY_SECRET?.trim() ?? "",
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET?.trim() ?? "",
   },
-  /** true limits checkout to NCR PINs. false accepts any valid Indian PIN. */
-  ncrOnly: process.env.NCR_ONLY?.trim().toLowerCase() !== "false",
   /** Explicit paise. Unset means "not chosen yet" and checkout shows ₹0 rather than a guessed rate. */
   shipping: {
     configured: process.env.SHIPPING_PAISE !== undefined && process.env.SHIPPING_PAISE.trim() !== "",

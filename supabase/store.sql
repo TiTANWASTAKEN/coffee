@@ -1,7 +1,8 @@
 -- Run once in the Supabase dashboard: SQL Editor → New query → Run.
 -- Orders, products and tracking. The service-role key is the only client.
 -- Also run supabase/waitlist.sql if you still want the email list.
--- An existing project that already ran this file should run supabase/coupons.sql to add codes.
+-- An existing project that already ran this file should run supabase/coupons.sql to add codes,
+-- and supabase/reminder.sql so the admin can edit the unpaid-checkout reminder.
 
 create table if not exists public.products (
   id bigint generated always as identity primary key,
@@ -264,12 +265,18 @@ begin
 end;
 $$;
 
+create table if not exists public.shop_settings (
+  key text primary key,
+  value text not null
+);
+
 alter table public.products enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.shipments enable row level security;
 alter table public.order_updates enable row level security;
 alter table public.coupons enable row level security;
+alter table public.shop_settings enable row level security;
 
 revoke all on table public.products from anon, authenticated;
 revoke all on table public.orders from anon, authenticated;
@@ -277,6 +284,7 @@ revoke all on table public.order_items from anon, authenticated;
 revoke all on table public.shipments from anon, authenticated;
 revoke all on table public.order_updates from anon, authenticated;
 revoke all on table public.coupons from anon, authenticated;
+revoke all on table public.shop_settings from anon, authenticated;
 
 revoke all on function public.place_order(jsonb) from public, anon, authenticated;
 revoke all on function public.release_order_stock(bigint) from public, anon, authenticated;

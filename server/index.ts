@@ -115,7 +115,6 @@ app.listen(config.port, (err) => {
     console.warn("No payment method is configured — checkout will refuse orders until Razorpay, COD_ENABLED, or UPI_VPA is set.");
   }
   if (!config.shipping.configured) console.warn("SHIPPING_PAISE is unset — checkout shows shipping as not configured and charges ₹0.");
-  console.log(config.ncrOnly ? "NCR_ONLY=true — checkout accepts NCR PIN codes." : "NCR_ONLY=false — checkout accepts Indian PIN codes.");
   if (config.supportEmail.endsWith("@yourdomain.com")) console.warn("SUPPORT_EMAIL is still the placeholder. Set it before launch.");
   if (config.supabase.url && config.supabase.serviceRoleKey) console.log("Waitlist storage: Supabase.");
   else if (config.siteVersion === "v0") console.warn("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set — waitlist emails are stored in the local database only.");

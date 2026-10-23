@@ -14,13 +14,12 @@
   NODE_VERSION = "22"
   SITE_VERSION = "v1"
   # These are store settings, not secrets. Their values are also in this file and the site.
-  SECRETS_SCAN_OMIT_KEYS = "SHIPPING_PAISE,NCR_ONLY,SITE_VERSION,PUBLIC_URL,SUPPORT_EMAIL,EMAIL_FROM,ADMIN_EMAIL,ADMIN_NOTIFY_EMAIL"
+  SECRETS_SCAN_OMIT_KEYS = "SHIPPING_PAISE,SITE_VERSION,PUBLIC_URL,SUPPORT_EMAIL,EMAIL_FROM,ADMIN_EMAIL,ADMIN_NOTIFY_EMAIL"
 
 [context.production.environment]
   SITE_VERSION = "v1"
   PUBLIC_URL = "https://bittertruthcoffee.in"
   SHIPPING_PAISE = "9000"
-  NCR_ONLY = "true"
 
 [functions]
   node_bundler = "esbuild"

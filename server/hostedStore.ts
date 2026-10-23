@@ -2,10 +2,12 @@ import { randomBytes } from "node:crypto";
 import type { AdminOrder, AdminStats, CheckoutConfig, Coupon, CouponQuote, CreateOrderResponse, CustomerDetails, Fulfillment, PaymentMethod, PaymentStatus, StoreProduct, TrackingUpdate } from "../shared/store";
 import { FULFILLMENT_STATES, fulfillmentLabel } from "../shared/store";
 import { canChangeFulfillment, canRefund, couponDiscount, couponOfferError, formatOrderCode, generateCouponCode, isCouponCode, letterFor, normalizeCouponCode, parseOrderCode, payableDiscount, phoneMatches, quote, upiIntent } from "./commerce";
+import { canClearUnpaidCheckout, defaultReminder } from "../shared/reminder.ts";
 import { shippingForQuantity } from "../shared/shipping.ts";
 import { config } from "./config";
 import { badRequest, HttpError, int, notFound, str } from "./http";
 import { deliverOrderMail } from "./orderMail";
+import { readOrderIds, readReminderTemplate, sendPaymentReminders, type ReminderTemplate } from "./reminder";
 import { createRazorpayOrder, razorpayConfigured, razorpayKeyId, verifyPaymentSignature, verifyWebhookSignature, webhookConfigured } from "./razorpay";
 import { readCustomerDetails } from "./validate";
 
@@ -56,6 +58,7 @@ async function rest(path: string, init: RequestInit = {}): Promise<unknown> {
     const message = typeof body === "object" && body && "message" in body ? String((body as { message: unknown }).message) : "";
     const code = typeof body === "object" && body && "code" in body ? String((body as { code: unknown }).code) : "";
     if (code === "PGRST205" || /could not find the (table|function)|schema cache/i.test(message)) {
+      if (/shop_settings/i.test(message)) throw new HttpError(503, "Run supabase/reminder.sql in the Supabase SQL editor, then save the reminder again.");
       if (/coupon/i.test(message)) throw new HttpError(503, "Run supabase/coupons.sql in the Supabase SQL editor.");
       throw new HttpError(503, "The store tables are missing. Run supabase/store.sql in the Supabase SQL editor.");
     }
@@ -728,16 +731,90 @@ export async function handlePublicStore(req: Request, path: string): Promise<Res
   return json(404, { error: "Not found." });
 }
 
+async function hostedReminder(): Promise<ReminderTemplate & { needsSetup: boolean }> {
+  try {
+    const rows = asArray<{ key: string; value: string }>(await rest("shop_settings?key=in.(payment_reminder_subject,payment_reminder_body)&select=key,value"));
+    const saved = new Map(rows.map((row) => [row.key, row.value]));
+    return {
+      subject: saved.get("payment_reminder_subject") || defaultReminder.subject,
+      body: saved.get("payment_reminder_body") || defaultReminder.body,
+      needsSetup: false,
+    };
+  } catch (err) {
+    if (err instanceof HttpError && /reminder.sql/.test(err.message)) return { ...defaultReminder, needsSetup: true };
+    throw err;
+  }
+}
+
+async function saveHostedReminder(template: ReminderTemplate): Promise<void> {
+  await rest("shop_settings?on_conflict=key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([
+      { key: "payment_reminder_subject", value: template.subject },
+      { key: "payment_reminder_body", value: template.body },
+    ]),
+  });
+}
+
+async function deleteHostedUnpaid(ids: number[]): Promise<{ deleted: number; skipped: number }> {
+  let deleted = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const order = await getOrderBy(`id=eq.${id}`);
+    if (!order || !canClearUnpaidCheckout(order)) {
+      skipped += 1;
+      continue;
+    }
+    await rest("rpc/release_order_stock", { method: "POST", body: JSON.stringify({ target_id: order.id }) });
+    const removed = asArray<unknown>(
+      await rest(`orders?id=eq.${order.id}&status=eq.pending&payment_method=eq.razorpay`, {
+        method: "DELETE",
+        headers: { Prefer: "return=representation" },
+      }),
+    );
+    if (removed.length === 1) deleted += 1;
+    else skipped += 1;
+  }
+  return { deleted, skipped };
+}
+
 export async function handleAdminStore(req: Request, path: string): Promise<Response | null> {
   const adminPath =
     path === "/api/admin/stats" ||
     path.startsWith("/api/admin/orders") ||
+    path.startsWith("/api/admin/settings") ||
     path.startsWith("/api/admin/products") ||
     path.startsWith("/api/admin/coupons");
   if (!adminPath) return null;
   if (!supabaseStoreConfigured()) return missing();
 
   if (req.method === "GET" && path === "/api/admin/stats") return json(200, await stats());
+
+  if (req.method === "GET" && path === "/api/admin/settings/payment-reminder") return json(200, await hostedReminder());
+  if (req.method === "PUT" && path === "/api/admin/settings/payment-reminder") {
+    const template = readReminderTemplate(await req.json());
+    await saveHostedReminder(template);
+    return json(200, { ...template, needsSetup: false });
+  }
+  if (req.method === "POST" && path === "/api/admin/orders/remind") {
+    const ids = readOrderIds(await req.json());
+    const orders: AdminOrder[] = [];
+    for (const id of ids) {
+      const order = await getOrderBy(`id=eq.${id}`);
+      if (order) orders.push(order);
+    }
+    const result = await sendPaymentReminders(orders, await hostedReminder());
+    result.skipped += ids.length - orders.length;
+    if (result.sent === 0 && result.failed > 0) throw new HttpError(502, "The email provider did not accept the message.");
+    if (result.sent === 0) throw badRequest("Only an unpaid online checkout can be reminded.");
+    return json(200, result);
+  }
+  if (req.method === "POST" && path === "/api/admin/orders/delete-unpaid") {
+    const result = await deleteHostedUnpaid(readOrderIds(await req.json()));
+    if (result.deleted === 0) throw badRequest("Only an unpaid online checkout can be deleted.");
+    return json(200, result);
+  }
 
   if (req.method === "GET" && path === "/api/admin/orders") {
     const status = new URL(req.url).searchParams.get("status") ?? "";

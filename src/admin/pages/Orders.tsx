@@ -1,9 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { AdminOrder, PaymentStatus } from "@shared/store";
-import { useAdminQuery } from "../auth";
+import { canClearUnpaidCheckout, defaultReminder } from "@shared/reminder";
+import { errorMessage } from "@/lib/api";
+import { useAdminAuth, useAdminQuery } from "../auth";
 import { OrdersTable } from "../OrdersTable";
-import { AdminButton, Alert, Card, inputClass, Loading, PageTitle } from "../ui";
+import { AdminButton, Alert, Card, FormField, inputClass, Loading, PageTitle } from "../ui";
+
+interface ReminderSettings {
+  subject: string;
+  body: string;
+  needsSetup: boolean;
+}
 
 const tabs: { label: string; value: PaymentStatus | "" }[] = [
   { label: "All", value: "" },
@@ -14,12 +22,29 @@ const tabs: { label: string; value: PaymentStatus | "" }[] = [
 ];
 
 export default function Orders() {
+  const { request } = useAdminAuth();
   const [params, setParams] = useSearchParams();
   const status = (params.get("status") ?? "") as PaymentStatus | "";
-  const { data, error, loading } = useAdminQuery<AdminOrder[]>(status ? `/orders?status=${status}` : "/orders");
+  const { data, error, loading, reload } = useAdminQuery<AdminOrder[]>(status ? `/orders?status=${status}` : "/orders");
+  const reminder = useAdminQuery<ReminderSettings>("/settings/payment-reminder");
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [selected, setSelected] = useState<number[]>([]);
+  const [subject, setSubject] = useState(defaultReminder.subject);
+  const [messageBody, setMessageBody] = useState(defaultReminder.body);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
+
+  useEffect(() => {
+    setSelected([]);
+  }, [status]);
+
+  useEffect(() => {
+    if (!reminder.data) return;
+    setSubject(reminder.data.subject);
+    setMessageBody(reminder.data.body);
+  }, [reminder.data]);
 
   const orders = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -34,15 +59,83 @@ export default function Orders() {
     });
   }, [data, query, from, to]);
 
+  const unpaid = orders.filter(canClearUnpaidCheckout);
+
+  function toggle(id: number) {
+    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  async function saveReminder() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const saved = await request<ReminderSettings>("/settings/payment-reminder", { method: "PUT", body: { subject, body: messageBody } });
+      reminder.setData(saved);
+      setNotice({ tone: "success", text: "Reminder message saved." });
+    } catch (err) {
+      setNotice({ tone: "error", text: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function act(kind: "remind" | "delete-unpaid") {
+    if (selected.length === 0) return;
+    const noun = selected.length === 1 ? "checkout" : "checkouts";
+    const question =
+      kind === "delete-unpaid"
+        ? `Delete ${selected.length} unpaid ${noun}? The bags go back into stock.`
+        : `Send the reminder to ${selected.length} ${selected.length === 1 ? "customer" : "customers"}?`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await request<{ sent?: number; failed?: number; deleted?: number; skipped?: number }>(`/orders/${kind}`, {
+        method: "POST",
+        body: { ids: selected },
+      });
+      if (kind === "remind") {
+        const failed = result.failed ?? 0;
+        setNotice({
+          tone: failed ? "error" : "success",
+          text: failed ? `Sent ${result.sent ?? 0}. ${failed} could not be sent.` : `Reminder sent to ${result.sent ?? 0}.`,
+        });
+      } else {
+        setNotice({ tone: "success", text: `Deleted ${result.deleted ?? 0}.` });
+      }
+      setSelected([]);
+      await reload();
+    } catch (err) {
+      setNotice({ tone: "error", text: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <PageTitle
         title="Orders"
         subtitle={data ? `${data.length} order${data.length === 1 ? "" : "s"}` : undefined}
         actions={
-          <AdminButton tone="secondary" disabled={!orders.length} onClick={() => downloadCsv(orders)}>
-            Export CSV
-          </AdminButton>
+          <div className="flex flex-wrap gap-2">
+            {status === "pending" && (
+              <>
+                <AdminButton tone="secondary" disabled={busy || unpaid.length === 0} onClick={() => setSelected(unpaid.map((order) => order.id))}>
+                  Select unpaid
+                </AdminButton>
+                <AdminButton disabled={busy || selected.length === 0} onClick={() => void act("remind")}>
+                  Send reminder
+                </AdminButton>
+                <AdminButton tone="danger" disabled={busy || selected.length === 0} onClick={() => void act("delete-unpaid")}>
+                  Delete
+                </AdminButton>
+              </>
+            )}
+            <AdminButton tone="secondary" disabled={!orders.length} onClick={() => downloadCsv(orders)}>
+              Export CSV
+            </AdminButton>
+          </div>
         }
       />
 
@@ -76,7 +169,31 @@ export default function Orders() {
       </div>
 
       {error && <Alert>{error}</Alert>}
-      <Card>{loading && !data ? <Loading /> : <OrdersTable orders={orders} />}</Card>
+      {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
+      {status === "pending" && (
+        <Card title="Reminder message" className="mb-5">
+          {reminder.data?.needsSetup && (
+            <Alert>Saving needs supabase/reminder.sql in the Supabase SQL editor. Until then, reminders use the wording already shown.</Alert>
+          )}
+          <div className="mt-4 flex flex-col gap-4">
+            <FormField label="Subject">
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={140} className={inputClass} />
+            </FormField>
+            <FormField
+              label="Message"
+              hint="Filled in when you send: {name} {order} {items} {total} {shop}. This goes only to unpaid online checkouts. Cash on delivery and UPI orders stay."
+            >
+              <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} maxLength={2000} rows={8} className={inputClass} />
+            </FormField>
+            <div>
+              <AdminButton onClick={() => void saveReminder()} disabled={busy || reminder.loading}>
+                {busy ? "Saving…" : "Save message"}
+              </AdminButton>
+            </div>
+          </div>
+        </Card>
+      )}
+      <Card>{loading && !data ? <Loading /> : <OrdersTable orders={orders} selected={selected} onToggle={status === "pending" ? toggle : undefined} />}</Card>
     </>
   );
 }

@@ -7,7 +7,6 @@ dist-ssr
 *.log
 .env
 .env.*
-!.env.example
 
 # Database + uploaded images (see DATA_DIR). Anchored to the project root
 # so src/data (site content) is not ignored.

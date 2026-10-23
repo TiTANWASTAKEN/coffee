@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { fulfillmentLabel, nextFulfillments, type AdminOrder, type Fulfillment } from "@shared/store";
+import { canClearUnpaidCheckout } from "@shared/reminder";
 import { errorMessage } from "@/lib/api";
 import { formatDate, formatPrice } from "@/lib/format";
 import { useAdminAuth, useAdminQuery } from "../auth";
@@ -9,6 +10,7 @@ import { AdminButton, Alert, Badge, Card, FormField, inputClass, Loading, PageTi
 
 export default function OrderDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { request } = useAdminAuth();
   const { data: order, setData, error, loading } = useAdminQuery<AdminOrder>(`/orders/${id}`);
   const [fulfillment, setFulfillment] = useState<Fulfillment | null>(null);
@@ -143,6 +145,50 @@ export default function OrderDetail() {
               <Detail label="Razorpay payment" value={<code className="text-[0.8rem]">{order.razorpayPaymentId ?? "—"}</code>} />
             </dl>
             <div className="mt-5 flex flex-wrap gap-2">
+              {canClearUnpaidCheckout(order) && (
+                <>
+                  <AdminButton
+                    disabled={saving}
+                    onClick={() => {
+                      if (!window.confirm(`Send the payment reminder to ${c.email}?`)) return;
+                      void (async () => {
+                        setSaving(true);
+                        setMessage(null);
+                        try {
+                          await request("/orders/remind", { method: "POST", body: { ids: [order.id] } });
+                          setMessage({ tone: "success", text: "Reminder sent." });
+                        } catch (err) {
+                          setMessage({ tone: "error", text: errorMessage(err) });
+                        } finally {
+                          setSaving(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Send reminder
+                  </AdminButton>
+                  <AdminButton
+                    tone="danger"
+                    disabled={saving}
+                    onClick={() => {
+                      if (!window.confirm("Delete this unpaid checkout? The bags go back into stock.")) return;
+                      void (async () => {
+                        setSaving(true);
+                        setMessage(null);
+                        try {
+                          await request("/orders/delete-unpaid", { method: "POST", body: { ids: [order.id] } });
+                          navigate("/admin/orders?status=pending", { replace: true });
+                        } catch (err) {
+                          setMessage({ tone: "error", text: errorMessage(err) });
+                          setSaving(false);
+                        }
+                      })();
+                    }}
+                  >
+                    Delete
+                  </AdminButton>
+                </>
+              )}
               {order.paymentMethod !== "razorpay" && order.status === "pending" && (
                 <AdminButton
                   onClick={() => {
@@ -164,9 +210,11 @@ export default function OrderDetail() {
                   Mark refunded
                 </AdminButton>
               )}
-              <AdminButton tone="secondary" onClick={() => void act("resend-email")}>
-                Resend email
-              </AdminButton>
+              {!canClearUnpaidCheckout(order) && (
+                <AdminButton tone="secondary" onClick={() => void act("resend-email")}>
+                  Resend email
+                </AdminButton>
+              )}
             </div>
           </Card>
         </div>
