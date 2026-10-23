@@ -74,7 +74,10 @@ export const assets = {
   },
 
   products: {
-    "honest-truth": productImages("honest-truth", "Honest Truth", "honest"),
+    "honest-truth": {
+      ...productImages("honest-truth", "Honest Truth", "honest"),
+      packshot: image("/images/products/honest-truth/packshot.jpg?v=1", "Honest Truth whole-bean coffee bag, 250g", { label: "Honest Truth", variant: "packshot", tone: "honest" }, true, "contain"),
+    },
     "dark-truth": {
       ...productImages("dark-truth", "Dark Truth", "dark"),
       packshot: image("/images/products/dark-truth/packshot.jpg?v=3", "Dark Truth whole-bean coffee bag, 250g", { label: "Dark Truth", variant: "packshot", tone: "dark" }, true, "contain"),
