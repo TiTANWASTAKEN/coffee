@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { AdminOrder, AdminStats, CheckoutConfig, Coupon, CouponQuote, CreateOrderResponse, CustomerDetails, Fulfillment, PaymentMethod, PaymentStatus, StoreProduct, TrackingUpdate } from "../shared/store";
 import { FULFILLMENT_STATES, fulfillmentLabel } from "../shared/store";
 import { canChangeFulfillment, canRefund, couponDiscount, couponOfferError, formatOrderCode, generateCouponCode, isCouponCode, letterFor, normalizeCouponCode, parseOrderCode, payableDiscount, phoneMatches, quote, upiIntent } from "./commerce";
+import { shippingForQuantity } from "../shared/shipping.ts";
 import { config } from "./config";
 import { badRequest, HttpError, int, notFound, str } from "./http";
 import { deliverOrderMail } from "./orderMail";
@@ -389,6 +390,10 @@ async function createCheckout(body: Record<string, unknown>): Promise<{ order: A
   const method = readMethod(body.paymentMethod);
   const notes = typeof body.notes === "string" ? body.notes.trim().slice(0, 500) : "";
   if (!Number.isInteger(config.shipping.paise) || config.shipping.paise < 0) throw badRequest("Shipping charge is not configured.");
+  const shippingPaise = shippingForQuantity(
+    items.reduce((sum, item) => sum + item.quantity, 0),
+    config.shipping.paise,
+  );
   const publicId = randomBytes(12).toString("base64url");
   const id = Number(
     await rest("rpc/place_order", {
@@ -397,7 +402,7 @@ async function createCheckout(body: Record<string, unknown>): Promise<{ order: A
         payload: {
           publicId,
           paymentMethod: method,
-          shippingPaise: config.shipping.paise,
+          shippingPaise,
           notes,
           idempotencyKey,
           couponCode,
@@ -586,10 +591,14 @@ async function quoteHostedCoupon(codeRaw: unknown, itemBody: unknown): Promise<C
   if (!coupon) throw badRequest("That code isn't valid.");
   if (!coupon.active) throw badRequest("That code is no longer active.");
   if (coupon.used >= coupon.maxUses) throw badRequest("This code has been used up.");
-  const discountPaise = payableDiscount(subtotal, config.shipping.paise, couponDiscount(subtotal, coupon.kind, coupon.value));
+  const shippingPaise = shippingForQuantity(
+    items.reduce((sum, item) => sum + item.quantity, 0),
+    config.shipping.paise,
+  );
+  const discountPaise = payableDiscount(subtotal, shippingPaise, couponDiscount(subtotal, coupon.kind, coupon.value));
   if (discountPaise < 1) throw badRequest("This code does not change the total.");
-  const priced = quote([{ unitPrice: subtotal, quantity: 1 }], config.shipping.paise, discountPaise);
-  return { code, kind: coupon.kind, discountPaise, subtotal, shippingPaise: config.shipping.paise, total: priced.total };
+  const priced = quote([{ unitPrice: subtotal, quantity: 1 }], shippingPaise, discountPaise);
+  return { code, kind: coupon.kind, discountPaise, subtotal, shippingPaise, total: priced.total };
 }
 
 export async function handlePublicStore(req: Request, path: string): Promise<Response | null> {

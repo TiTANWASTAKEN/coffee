@@ -16,9 +16,9 @@ export const legalCopy: Record<string, { intro: string; paragraphs: string[] }> 
     ],
   },
   shipping: {
-    intro: "A flat charge, shown before you pay.",
+    intro: "Charged by weight, shown before you pay.",
     paragraphs: [
-      "Shipping is a flat fee added to every order. The amount is on the checkout page, in the total, before you pay.",
+      "Shipping for up to 1 kg is the rate shown at checkout. Each kilogram after that, including part of a kilogram, adds ₹40. A bag is 250g, so 1.5 kg and 2 kg cost the same.",
       "If we cannot deliver to the PIN code you enter, checkout tells you before any payment is taken.",
       "After the order is packed, track it with the order number and the phone number used at checkout.",
     ],

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import express, { Router, type Request } from "express";
 import type { CheckoutConfig, CreateOrderResponse, OrderItem, PaymentMethod } from "../../shared/store";
 import { normalizeCouponCode, parseOrderCode, phoneMatches, quote, upiIntent } from "../commerce";
+import { shippingForQuantity } from "../../shared/shipping.ts";
 import { quoteCoupon } from "../coupons";
 import { config } from "../config";
 import { rememberAddress } from "../customers";
@@ -99,7 +100,7 @@ function createPendingOrder(req: Request) {
   const customer = readCustomerDetails(req.body?.customer);
   const method = readMethod(req.body?.paymentMethod);
   const notes = typeof req.body?.notes === "string" ? req.body.notes.trim().slice(0, 500) : "";
-  const priced = quote(items, config.shipping.paise);
+  const priced = quote(items, shippingForQuantity(items.reduce((sum, item) => sum + item.quantity, 0), config.shipping.paise));
   const applied = couponCode ? quoteCoupon(couponCode, priced.subtotal, priced.shippingPaise) : null;
   const account = currentCustomer(req);
   const publicId = randomBytes(12).toString("base64url");
@@ -184,7 +185,8 @@ storeRouter.post("/checkout/order", checkoutLimit, async (req, res) => {
 storeRouter.post("/checkout/coupon", checkoutLimit, (req, res) => {
   const items = readItems(req.body?.items);
   const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  res.json(quoteCoupon(req.body?.code, subtotal, config.shipping.paise));
+  const shippingPaise = shippingForQuantity(items.reduce((sum, item) => sum + item.quantity, 0), config.shipping.paise);
+  res.json(quoteCoupon(req.body?.code, subtotal, shippingPaise));
 });
 
 storeRouter.get("/checkout/config", (_req, res) => {

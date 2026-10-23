@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Lock } from "lucide-react";
 import type { CheckoutConfig, CouponQuote, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
+import { shippingForQuantity } from "@shared/shipping";
 import { accountsEnabled } from "@/config/features";
 import { site } from "@/config/site";
 import { getProduct } from "@/data/products";
@@ -105,7 +106,9 @@ export default function Checkout() {
 
   const set = (field: keyof CustomerDetails) => (value: string) => setDetails((d) => ({ ...d, [field]: value }));
   const busy = phase !== "idle";
-  const shippingPaise = checkout?.shippingPaise ?? 0;
+  const units = cart.lines.reduce((sum, line) => sum + line.quantity, 0);
+  const quotedShipping = checkout ? shippingForQuantity(units, checkout.shippingPaise) : 0;
+  const shippingPaise = applied?.shippingPaise ?? quotedShipping;
   const totalPaise = applied?.total ?? cart.subtotal + shippingPaise;
 
   async function applyCoupon() {

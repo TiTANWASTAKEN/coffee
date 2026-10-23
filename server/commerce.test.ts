@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
+import { shippingForQuantity } from "../shared/shipping.ts";
 import {
   RESERVE_STOCK_SQL,
   canChangeFulfillment,
@@ -15,6 +16,16 @@ import {
 } from "./commerce.ts";
 
 describe("quote", () => {
+  it("charges ₹90 up to 1kg and ₹40 more for each kilogram after that", () => {
+    assert.equal(shippingForQuantity(1, 9000), 9000);
+    assert.equal(shippingForQuantity(4, 9000), 9000);
+    assert.equal(shippingForQuantity(5, 9000), 13000);
+    assert.equal(shippingForQuantity(6, 9000), 13000);
+    assert.equal(shippingForQuantity(8, 9000), 13000);
+    assert.equal(shippingForQuantity(9, 9000), 17000);
+    assert.equal(shippingForQuantity(4, 0), 0);
+  });
+
   it("adds a configured shipping charge to database prices", () => {
     const priced = quote(
       [
