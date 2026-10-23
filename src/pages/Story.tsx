@@ -1,6 +1,6 @@
 import { assets } from "@/config/assets";
 import { site } from "@/config/site";
-import { principles } from "@/data/story";
+import { principles, storyIntro } from "@/data/story";
 import { PageTransition } from "@/components/layout/PageTransition";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SmartImage } from "@/components/media/SmartImage";
@@ -19,7 +19,7 @@ export default function Story() {
       <PageHeader
         eyebrow="Our story"
         title={["The truth", "about coffee."]}
-        intro="Coffee has collected a lot of theatre. We’d like to hand some of it back."
+        intro={storyIntro}
       />
 
       <div className="container-site">

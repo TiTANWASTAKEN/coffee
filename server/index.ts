@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import express from "express";
 import cookieParser from "cookie-parser";
+import { coffeeSlugs } from "../shared/coffeeSlugs.ts";
 import { config } from "./config";
 import "./db";
 import { errorHandler, notFound } from "./http";
@@ -40,9 +41,56 @@ app.use("/api", () => {
 
 // In production the same server also serves the built React app.
 const indexHtml = path.join(config.distDir, "index.html");
+
+function prerenderedHtml(requestPath: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(requestPath);
+  } catch {
+    return null;
+  }
+  if (!decoded.startsWith("/") || decoded.includes("\0")) return null;
+  const root = path.resolve(config.distDir);
+  const candidate = path.resolve(root, `.${decoded}`, "index.html");
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return existsSync(candidate) ? candidate : null;
+}
 if (existsSync(indexHtml)) {
-  app.use(express.static(config.distDir, { index: false, maxAge: "1h" }));
-  app.get("/{*path}", (_req, res) => res.sendFile(indexHtml));
+  const editorial = new Set<string>(coffeeSlugs);
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+    if (req.path.length > 1 && req.path.endsWith("/")) {
+      const stripped = req.path.replace(/\/+$/, "");
+      const shopSlug = /^\/shop\/([^/]+)$/.exec(stripped)?.[1];
+      if (prerenderedHtml(stripped) || (shopSlug !== undefined && editorial.has(shopSlug))) {
+        res.redirect(301, stripped);
+        return;
+      }
+    }
+    next();
+  });
+  app.get("/sitemap.xml", (_req, res) => {
+    res.sendFile(path.join(config.distDir, "sitemap.xml"), { headers: { "Content-Type": "application/xml; charset=utf-8" } });
+  });
+  app.get("/robots.txt", (_req, res) => {
+    res.sendFile(path.join(config.distDir, "robots.txt"), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  });
+  app.get("/shop/:slug", (req, res, next) => {
+    const slug = req.params.slug;
+    if (typeof slug === "string" && editorial.has(slug)) {
+      res.redirect(301, `/coffee/${slug}`);
+      return;
+    }
+    next();
+  });
+  app.use(express.static(config.distDir, { index: false, redirect: false, maxAge: "1h" }));
+  app.get("/{*path}", (req, res) => {
+    res.sendFile(prerenderedHtml(req.path) ?? indexHtml);
+  });
 }
 
 app.use(errorHandler);

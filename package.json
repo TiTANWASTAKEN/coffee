@@ -10,7 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:api": "tsx watch --clear-screen=false --disable-warning=ExperimentalWarning server/index.ts",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && tsx scripts/seo.mts public && vite build && tsx scripts/seo.mts prerender",
     "start": "tsx --disable-warning=ExperimentalWarning server/index.ts",
     "typecheck": "tsc -b --noEmit",
     "test": "tsx --test server/commerce.test.ts server/orders.integration.test.ts server/supabaseWaitlist.test.ts",

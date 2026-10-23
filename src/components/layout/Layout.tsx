@@ -12,6 +12,7 @@ import { CartDrawer } from "@/components/cart/CartDrawer";
 import { storeEnabled } from "@/config/features";
 import { useLockScroll } from "@/hooks/useLockScroll";
 import { useCart } from "@/store/cart";
+import { Seo } from "@/seo/Seo";
 
 export function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -52,6 +53,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <MotionConfig reducedMotion="user">
+      <Seo />
       <IntroProvider>
         <button
           type="button"

@@ -1,5 +1,7 @@
 import { assets } from "@/config/assets";
 
+export const storyIntro = "Coffee has collected a lot of theatre. We’d like to hand some of it back.";
+
 export const principles = [
   {
     title: "Say what it is",
