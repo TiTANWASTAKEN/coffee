@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import type { CustomerAccount } from "@shared/store";
+import { EMAIL_PATTERN } from "@shared/email";
 import { AuthShell, safeNext } from "@/components/account/AuthShell";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Field";
@@ -40,7 +41,7 @@ export default function Register() {
     <AuthShell eyebrow="Account" title="Join us." intro="Track your orders and save your addresses for next time.">
       <form onSubmit={onSubmit} className="flex flex-col gap-7">
         <Field label="Full name" autoComplete="name" required maxLength={120} value={name} onChange={setName} />
-        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={setEmail} />
+        <Field label="Email" type="text" inputMode="email" autoComplete="email" pattern={EMAIL_PATTERN} title="Use an address like name@email.com, name@email.in, or name@email.co.in" required value={email} onChange={setEmail} />
         <Field label="Phone (optional)" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={setPhone} />
         <Field label="Password" type="password" autoComplete="new-password" required minLength={8} value={password} onChange={setPassword} />
         <p className="-mt-4 text-body-sm text-faint">At least 8 characters.</p>

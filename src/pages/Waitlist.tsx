@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { EMAIL_PATTERN } from "@shared/email";
 import { PageTransition } from "@/components/layout/PageTransition";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Field";
@@ -43,15 +44,17 @@ export default function Waitlist() {
             <form onSubmit={onSubmit} className="mt-12 flex max-w-xl flex-col gap-6 sm:flex-row sm:items-end">
               <Field
                 label="Email"
-                type="email"
+                type="text"
+                inputMode="email"
                 name="email"
                 autoComplete="email"
-                inputMode="email"
+                pattern={EMAIL_PATTERN}
+                title="Use an address like name@email.com, name@email.in, or name@email.co.in"
                 required
                 maxLength={200}
                 value={email}
                 onChange={setEmail}
-                placeholder="you@email.com"
+                placeholder="name@email.co.in"
                 className="min-w-0 flex-1"
               />
               <Button type="submit" size="lg" icon="right" disabled={phase === "sending"} className="sm:mb-px">

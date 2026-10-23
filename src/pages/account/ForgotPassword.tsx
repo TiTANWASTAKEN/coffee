@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
+import { EMAIL_PATTERN } from "@shared/email";
 import { AuthShell } from "@/components/account/AuthShell";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Field";
@@ -43,7 +44,7 @@ export default function ForgotPassword() {
   return (
     <AuthShell eyebrow="Account" title="Forgot password?" intro="Enter your email and we’ll send you a link to choose a new one.">
       <form onSubmit={onSubmit} className="flex flex-col gap-7">
-        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={setEmail} />
+        <Field label="Email" type="text" inputMode="email" autoComplete="email" pattern={EMAIL_PATTERN} title="Use an address like name@email.com, name@email.in, or name@email.co.in" required value={email} onChange={setEmail} />
         <FormError>{error}</FormError>
         <Button type="submit" size="lg" disabled={busy} className="w-full">
           {busy ? "Sending…" : "Send reset link"}

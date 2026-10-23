@@ -1,8 +1,8 @@
 import type { AddressInput, CustomerDetails } from "../shared/store";
+import { isEmail } from "../shared/email.ts";
 import { config } from "./config";
 import { badRequest, str } from "./http";
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE = /^\+?[0-9\s-]{10,15}$/;
 const PIN = /^[1-9][0-9]{5}$/;
 
@@ -38,7 +38,7 @@ function canDeliver(pin: string): boolean {
 
 export function readEmail(value: unknown): string {
   const email = str(value, "Email", { max: 200 }).toLowerCase();
-  if (!EMAIL.test(email)) throw badRequest("Enter a valid email address.");
+  if (!isEmail(email)) throw badRequest("Enter a valid email address.");
   return email;
 }
 

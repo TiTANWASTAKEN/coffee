@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { shippingForQuantity } from "../shared/shipping.ts";
+import { isEmail } from "../shared/email.ts";
 import {
   RESERVE_STOCK_SQL,
   canChangeFulfillment,
@@ -14,6 +15,17 @@ import {
   quote,
   upiIntent,
 } from "./commerce.ts";
+
+describe("email", () => {
+  it("accepts .com, .in, and .co.in", () => {
+    assert.equal(isEmail("a@gmail.com"), true);
+    assert.equal(isEmail("a@gmail.in"), true);
+    assert.equal(isEmail("hello@company.co.in"), true);
+    assert.equal(isEmail("name@iitb.ac.in"), true);
+    assert.equal(isEmail("not-an-email"), false);
+    assert.equal(isEmail("a@b"), false);
+  });
+});
 
 describe("quote", () => {
   it("charges ₹90 up to 1kg and ₹40 more for each kilogram after that", () => {

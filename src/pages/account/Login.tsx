@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import type { CustomerAccount } from "@shared/store";
+import { EMAIL_PATTERN } from "@shared/email";
 import { AuthShell, safeNext } from "@/components/account/AuthShell";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Field";
@@ -37,7 +38,7 @@ export default function Login() {
   return (
     <AuthShell eyebrow="Account" title="Sign in." intro="See your orders and check out faster with saved addresses.">
       <form onSubmit={onSubmit} className="flex flex-col gap-7">
-        <Field label="Email" type="email" autoComplete="email" required value={email} onChange={setEmail} />
+        <Field label="Email" type="text" inputMode="email" autoComplete="email" pattern={EMAIL_PATTERN} title="Use an address like name@email.com, name@email.in, or name@email.co.in" required value={email} onChange={setEmail} />
         <Field label="Password" type="password" autoComplete="current-password" required value={password} onChange={setPassword} />
         <Link to="/account/forgot" className="-mt-3 w-fit text-body-sm text-muted underline hover:text-ivory">
           Forgot your password?

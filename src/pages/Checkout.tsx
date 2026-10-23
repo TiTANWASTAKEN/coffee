@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { Lock } from "lucide-react";
 import type { CheckoutConfig, CouponQuote, CreateOrderRequest, CreateOrderResponse, CustomerDetails, PaymentMethod, SavedAddress } from "@shared/store";
+import { EMAIL_PATTERN } from "@shared/email";
 import { shippingForQuantity } from "@shared/shipping";
 import { accountsEnabled } from "@/config/features";
 import { site } from "@/config/site";
@@ -281,7 +282,7 @@ export default function Checkout() {
 
             <Fieldset legend="Contact">
               <Field label="Full name" autoComplete="name" value={details.name} onChange={set("name")} required className="sm:col-span-2" />
-              <Field label="Email" type="email" autoComplete="email" value={details.email} onChange={set("email")} required />
+              <Field label="Email" type="text" inputMode="email" autoComplete="email" pattern={EMAIL_PATTERN} title="Use an address like name@email.com, name@email.in, or name@email.co.in" value={details.email} onChange={set("email")} required />
               <Field
                 label="Phone"
                 type="tel"
